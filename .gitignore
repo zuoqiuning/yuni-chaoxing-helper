@@ -1,11 +1,16 @@
-# 导出 / 打包产物
+# 本地脚本（不上传）
+export.ps1
+export.bat
+push-to-gitee.ps1
+push-to-gitee.bat
+pack.ps1
+pack.bat
+
+# 导出产物
 项目代码.md
 *.zip
 *.7z
 *.rar
-*.crx
-*.pem
-key.pem
 
 # 依赖 / 缓存
 node_modules/
@@ -31,11 +36,3 @@ desktop.ini
 .env
 .env.local
 secrets.json
-
-# 本地测试
-test/
-tmp/
-
-# 上传脚本（可选，如果不想让别人看到就取消注释）
-# push-to-gitee.ps1
-# push-to-gitee.bat
