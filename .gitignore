@@ -1,0 +1,41 @@
+# 导出 / 打包产物
+项目代码.md
+*.zip
+*.7z
+*.rar
+*.crx
+*.pem
+key.pem
+
+# 依赖 / 缓存
+node_modules/
+.cache/
+dist/
+build/
+*.log
+*.tmp
+*.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 敏感信息
+.env
+.env.local
+secrets.json
+
+# 本地测试
+test/
+tmp/
+
+# 上传脚本（可选，如果不想让别人看到就取消注释）
+# push-to-gitee.ps1
+# push-to-gitee.bat

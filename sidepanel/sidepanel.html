@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>屿宁学习助手</title>
+<link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="header">
+    <span class="title">屿宁学习助手</span>
+    <div class="header-actions">
+      <span class="status-dot" id="status-dot" title="空闲"></span>
+      <button class="icon-btn" id="settings" title="设置 API Key">⚙</button>
+      <button class="icon-btn" id="refresh" title="重新扫描">↻</button>
+    </div>
+  </div>
+
+  <div class="ai-banner warn" id="ai-banner">
+    <span class="ai-banner-icon">●</span>
+    <span class="ai-banner-text">未接入 AI 模型</span>
+    <span class="ai-banner-action">点击接入 →</span>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-info">
+      <span class="progress-text" id="progress-text">准备中…</span>
+      <span class="progress-percent" id="progress-percent">0%</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-bar-inner" id="progress-inner"></div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="section">
+      <div class="section-title">
+        <span>目录</span>
+        <span class="stat" id="catalog-stat"></span>
+      </div>
+      <div id="catalog" class="list scrollable"><div class="empty">加载中…</div></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span>当前节任务点</span>
+        <span class="stat" id="jobs-stat"></span>
+      </div>
+      <div id="jobs" class="list scrollable"><div class="empty">未扫描</div></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span>AI 答题</span>
+        <span class="stat" id="quiz-stat"></span>
+      </div>
+      <div id="quiz-panel">
+        <div id="quiz" class="list scrollable"></div>
+        <div class="quiz-actions">
+          <button id="scan-quiz">扫描题目</button>
+          <button id="ask-ai" class="primary">AI 答题</button>
+          <button id="fill-answers">填入答案</button>
+        </div>
+      </div>
+      <div id="quiz-empty" class="empty">打开答题页面后点击"扫描题目"</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">日志</div>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button id="start" class="primary">开始刷课</button>
+    <button id="stop" disabled>停止</button>
+  </div>
+
+  <script src="modules/utils.js"></script>
+  <script src="modules/storage.js"></script>
+  <script src="modules/ai.js"></script>
+  <script src="modules/render.js"></script>
+  <script src="modules/scan.js"></script>
+  <script src="modules/quiz.js"></script>
+  <script src="modules/settings.js"></script>
+  <script src="modules/status.js"></script>
+  <script src="modules/task.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
