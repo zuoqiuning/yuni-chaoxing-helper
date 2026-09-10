@@ -5,7 +5,6 @@
 
   let lockEnabled = true;
   let lastNotifyTime = 0;
-  let loginNotified = false;
 
   // ============================================================
   // Toast 提示
@@ -43,12 +42,12 @@
   // ============================================================
   document.addEventListener('click', (e) => {
     if (!lockEnabled) return;
-    if (window.__cxhInternalClick) return;  // 我们自己触发的 smartJump
+    if (window.__cxhInternalClick) return;
 
     const player = CXH.player;
     if (!player || !player.getExpectedSectionId) return;
     const expected = player.getExpectedSectionId();
-    if (!expected) return;  // 没在跑任务
+    if (!expected) return;
 
     const t = e.target;
     if (!t || !t.closest) return;
@@ -57,9 +56,8 @@
 
     const clickedId = (node.id || '').replace(/^cur/, '');
     if (!clickedId) return;
-    if (clickedId === expected) return;  // 允许切回目标节
+    if (clickedId === expected) return;
 
-    // 拦截
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
@@ -68,33 +66,22 @@
   }, true);
 
   // ============================================================
-  // 2. 登录过期 / 验证码检测
+  // 2. 验证码检测（登录过期检测改由 background 处理）
   // ============================================================
-  function notify(type, detail) {
+  function notifyCaptcha(detail) {
     const now = Date.now();
     if (now - lastNotifyTime < 30000) return;
     lastNotifyTime = now;
 
-    console.log('[CXH] alert:', type, detail);
+    console.log('[CXH] alert: CAPTCHA', detail);
     try {
       chrome.runtime.sendMessage({
         type: 'ALERT',
-        alertType: type,
+        alertType: 'CAPTCHA',
         detail: detail || '',
         url: location.href
       });
     } catch (_) {}
-  }
-
-  function checkLoginExpired() {
-    if (/passport2?\.chaoxing\.com/.test(location.href)) {
-      if (!loginNotified) {
-        loginNotified = true;
-        notify('LOGIN_EXPIRED', '页面跳转到登录页');
-      }
-      return true;
-    }
-    return false;
   }
 
   function checkCaptcha() {
@@ -119,13 +106,21 @@
       }
     }
 
+    // 3. 页面内检测到登录表单（原地弹出登录框，未跳转）
+    const loginBox = document.querySelector('.login-box, .passport-login, #loginForm, .login-form');
+    if (loginBox) {
+      const st = getComputedStyle(loginBox);
+      if (st.display !== 'none' && st.visibility !== 'hidden') {
+        return { selector: 'login-form', text: '页面内检测到登录框' };
+      }
+    }
+
     return null;
   }
 
   function runCheck() {
-    if (checkLoginExpired()) return;
     const captcha = checkCaptcha();
-    if (captcha) notify('CAPTCHA', captcha.text);
+    if (captcha) notifyCaptcha(captcha.text);
   }
 
   setInterval(runCheck, 5000);

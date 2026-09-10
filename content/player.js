@@ -237,6 +237,10 @@
     }
   }
 
+  function clearInterrupted() {
+    interrupted = false;
+  }
+
   async function pausePlayback() {
     paused = true;
     if (currentVideoEl && !currentVideoEl.paused) {
@@ -271,8 +275,12 @@
     pausePlayback,
     resumeFromPause,
     interruptWait,
+    clearInterrupted,
 
     async playJob(videoIframe, rate, autoMute) {
+      // ★ 每个 job 开始时清空残留的 interrupted 标志
+      interrupted = false;
+
       const v = dom.getVideoEl(videoIframe);
       if (!v) return { ok: false, error: 'no video element' };
       if (v.error) return { ok: false, error: 'video error: ' + (v.error.message || v.error.code) };
@@ -345,7 +353,6 @@
             finish({ ok: false, error: 'stopped' });
             return;
           }
-          // ★ 用户暂停 → 不恢复，不返回
           if (paused) {
             pausedCount = 0;
             return;

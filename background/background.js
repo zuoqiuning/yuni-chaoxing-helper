@@ -5,17 +5,30 @@ chrome.sidePanel
   .catch((err) => console.warn('[BG]', err));
 
 // ============================================================
-// 页面加载完 → 取消可丢弃 + 通知 sidepanel
+// 页面更新 → 取消可丢弃 + 通知 sidepanel + 登录过期检测
 // ============================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!tab || !tab.url || !tab.url.includes('chaoxing.com')) return;
+  if (!tab || !tab.url) return;
+  if (!tab.url.includes('chaoxing.com')) return;
+
+  // ★ 登录过期检测（跳转到 passport 域名）
+  if (/passport2?\.chaoxing\.com|passport\.chaoxing\.com/.test(tab.url)) {
+    chrome.runtime.sendMessage({
+      type: 'ALERT',
+      alertType: 'LOGIN_EXPIRED',
+      detail: '页面跳转到登录页',
+      url: tab.url,
+      tabId
+    }).catch(() => {});
+  }
+
   if (changeInfo.status !== 'complete') return;
 
   chrome.tabs.update(tabId, { autoDiscardable: false }).catch(() => {});
   chrome.runtime.sendMessage({ type: 'TAB_UPDATED', tabId, url: tab.url }).catch(() => {});
 });
 
-// ★ 标签页关闭 → 通知 sidepanel
+// 标签页关闭 → 通知 sidepanel
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.runtime.sendMessage({ type: 'TAB_CLOSED', tabId }).catch(() => {});
 });

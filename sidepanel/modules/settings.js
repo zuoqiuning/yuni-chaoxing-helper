@@ -9,6 +9,7 @@
     const cfg = await Store.getAIConfig();
     const autoAnswer = await Store.getAutoAnswer();
     const autoMute = await Store.getAutoMute();
+    const disruptLock = await Store.getDisruptLock();
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -45,8 +46,13 @@
             <input type="checkbox" id="auto-mute" ${autoMute ? 'checked' : ''} style="width:auto;">
             <span>自动静音播放（推荐）</span>
           </label>
+
+          <label class="modal-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px;">
+            <input type="checkbox" id="disrupt-lock" ${disruptLock ? 'checked' : ''} style="width:auto;">
+            <span>防打扰锁（任务运行时禁止切换章节）</span>
+          </label>
           <div style="font-size:11px;color:#999;margin-top:4px;margin-left:22px;">
-            开启后视频默认静音播放，避免浏览器自动播放拦截
+            防止误点其他章节打断任务
           </div>
         </div>
 
@@ -71,7 +77,6 @@
     overlay.querySelector('#ai-cancel').onclick = close;
     overlay.onclick = (e) => { if (e.target === overlay) close(); };
 
-    // 重新显示引导
     overlay.querySelector('#show-guide').onclick = async () => {
       close();
       if (SP.guide && SP.guide.reset) {
@@ -87,6 +92,7 @@
       const thinkingType = overlay.querySelector('#ai-thinking').value;
       const autoOn = overlay.querySelector('#auto-answer').checked;
       const autoMuteOn = overlay.querySelector('#auto-mute').checked;
+      const lockOn = overlay.querySelector('#disrupt-lock').checked;
 
       if (!apiKey) {
         statusEl.className = 'ai-status err';
@@ -106,9 +112,16 @@
         await Store.saveAIConfig({ apiKey, baseUrl, model, thinkingType });
         await Store.setAutoAnswer(autoOn);
         await Store.setAutoMute(autoMuteOn);
+        await Store.setDisruptLock(lockOn);
+
+        // ★ 立即同步锁状态到 content
+        if (SP.state.runningTabId) {
+          SP.scan.sendToTab('SET_LOCK', { enabled: lockOn }, 3000, SP.state.runningTabId).catch(() => {});
+        }
+
         statusEl.className = 'ai-status ok';
         statusEl.textContent = `✓ 验证通过（${model}）`;
-        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}）`, 'ok');
+        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}, 防打扰锁: ${lockOn ? '开' : '关'}）`, 'ok');
         if (SP.status && SP.status.refreshAiBanner) SP.status.refreshAiBanner();
         setTimeout(close, 1200);
       } else {
