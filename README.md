@@ -25,7 +25,7 @@ Edge / Chrome 浏览器扩展 · Manifest V3 · MIT 协议
 
 ### 方式一：下载 Release（推荐）
 
-1. 前往 [Releases](https://gitee.com/zuoqiuning/yuni-chaoxing-helper/releases) 下载最新版 zip
+1. 前往Releases下载最新版 zip
 2. 解压到固定目录（如 `D:\ChaoxingHelper`）
 3. 打开 `edge://extensions/`（Chrome 用 `chrome://extensions/`）
 4. 开启右上角「开发人员模式」

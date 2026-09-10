@@ -11,12 +11,32 @@
   let currentVideoEl = null;
   let currentVideoIframe = null;
   let expectedSectionId = null;
+  let lastHeartbeatLogState = null;
 
   function applyRate(v, pl, rate) {
     try {
       if (pl && typeof pl.playbackRate === 'function' && pl.playbackRate() !== rate) pl.playbackRate(rate);
       if (v.playbackRate !== rate) v.playbackRate = rate;
     } catch (_) {}
+  }
+
+  // ★ 清理旧的 rate hook，避免每个视频元素累积定时器
+  function installRateHook(v, pl, rate) {
+    if (!v || v.__cxhRateHooked) return;
+    v.__cxhRateHooked = true;
+
+    v.addEventListener('ratechange', () => setTimeout(() => applyRate(v, pl, rate), 0));
+
+    const intervalId = setInterval(() => {
+      // 视频已卸载 / 已从 DOM 移除 → 自清理
+      if (!v.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+      if (!v.paused && v.playbackRate !== rate) applyRate(v, pl, rate);
+    }, 1000);
+
+    v.__cxhRateInterval = intervalId;
   }
 
   function waitMetadata(v, timeoutMs) {
@@ -201,6 +221,41 @@
     }
   }
 
+  // ★ pause guard：3s 冷却 + 800ms 延迟 + isConnected 检查
+  function hookPauseGuard(v) {
+    if (!v || v.__cxhPauseGuardHooked) return;
+    v.__cxhPauseGuardHooked = true;
+
+    let lastRecover = 0;
+
+    v.addEventListener('pause', () => {
+      // 主动暂停不恢复
+      if (stopped || paused || interrupted) return;
+      if (v.ended) return;
+      if (v.error) return;
+      if (!v.duration || isNaN(v.duration) || v.duration <= 0) return;
+
+      // ★ 冷却：3 秒内不重复恢复，避免和超星快速对撞
+      const now = Date.now();
+      if (now - lastRecover < 3000) return;
+      lastRecover = now;
+
+      // ★ 延迟 800ms，给 videojs 切源留时间
+      setTimeout(() => {
+        if (!v.paused) return;
+        if (stopped || paused || interrupted) return;
+        if (v.ended || v.error) return;
+        if (!v.isConnected) return;
+        try {
+          v.muted = true;
+          v.play().catch(() => {});
+        } catch (_) {}
+      }, 800);
+    });
+
+    console.log('[CXH] pause guard hooked');
+  }
+
   async function resumePlayback() {
     if (!currentVideoEl) return { ok: false, error: '没有正在播放的视频' };
     const v = currentVideoEl;
@@ -212,6 +267,7 @@
       const r = await forceReloadIframe(currentVideoIframe);
       if (!r.ok) return { ok: false, error: '重载 iframe 失败: ' + r.error };
       currentVideoEl = r.videoEl;
+      hookPauseGuard(r.videoEl);
       const pl = dom.getVideoPlayer(currentVideoIframe);
       if (pl) applyRate(r.videoEl, pl, 2);
       try {
@@ -237,9 +293,7 @@
     }
   }
 
-  function clearInterrupted() {
-    interrupted = false;
-  }
+  function clearInterrupted() { interrupted = false; }
 
   async function pausePlayback() {
     paused = true;
@@ -278,8 +332,13 @@
     clearInterrupted,
 
     async playJob(videoIframe, rate, autoMute) {
-      // ★ 每个 job 开始时清空残留的 interrupted 标志
       interrupted = false;
+
+      // ★ 清理上一个 video 元素的 rate hook，避免 1s 空窗
+      if (currentVideoEl && currentVideoEl.__cxhRateInterval) {
+        clearInterval(currentVideoEl.__cxhRateInterval);
+        currentVideoEl.__cxhRateInterval = null;
+      }
 
       const v = dom.getVideoEl(videoIframe);
       if (!v) return { ok: false, error: 'no video element' };
@@ -289,6 +348,8 @@
       if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5)) {
         return { ok: true, alreadyDone: true, duration: v.duration, currentTime: v.currentTime };
       }
+
+      hookPauseGuard(v);
 
       const loaded = await smartPreload(v, pl);
       if (v.error) return { ok: false, error: 'video error after preload: ' + (v.error.message || v.error.code) };
@@ -303,11 +364,8 @@
       }
 
       applyRate(v, pl, rate);
-      if (!v.__cxhRateHooked) {
-        v.__cxhRateHooked = true;
-        v.addEventListener('ratechange', () => setTimeout(() => applyRate(v, pl, rate), 0));
-        setInterval(() => { if (!v.paused && v.playbackRate !== rate) applyRate(v, pl, rate); }, 1000);
-      }
+      installRateHook(v, pl, rate);   // ★ 用统一入口安装
+
       if (v.paused) {
         const resume = await safePlay(v, autoMute === true);
         if (!resume.ok) return { ok: false, error: 'resume play failed: ' + resume.error };
@@ -353,10 +411,7 @@
             finish({ ok: false, error: 'stopped' });
             return;
           }
-          if (paused) {
-            pausedCount = 0;
-            return;
-          }
+          if (paused) { pausedCount = 0; return; }
           if (v.error) {
             finish({ ok: false, error: 'video error: ' + (v.error.message || v.error.code) });
             return;
@@ -373,8 +428,7 @@
           }
           if (v.paused && !v.ended && v.currentTime < v.duration - 1) {
             pausedCount++;
-            if (pausedCount >= 2) {
-              utils.log(`  [waitEnded] 视频持续暂停，尝试恢复播放`);
+            if (pausedCount >= 3) {  // ★ 9 秒后恢复（原为 2，即 6 秒）
               safePlay(v, true).catch(() => {});
               pausedCount = 0;
             }
@@ -390,10 +444,8 @@
   document.addEventListener('visibilitychange', async () => {
     if (document.hidden || stopped || paused) return;
     if (!currentVideoEl) return;
-    utils.log('  [visibility] 页面重新可见，尝试恢复播放');
     const r = await resumePlayback();
-    if (r.ok) utils.log(`  [visibility] 恢复成功`, 'ok');
-    else utils.log(`  [visibility] 恢复失败: ${r.error}`, 'err');
+    if (r.ok && !r.alreadyPlaying) utils.log(`  [visibility] 恢复成功`, 'ok');
   });
 
   let lastHeartbeat = Date.now();
@@ -405,9 +457,16 @@
     if (!currentVideoEl) return;
     const isThrottled = gap > 15000;
     const isPaused = currentVideoEl.paused && !currentVideoEl.ended && !currentVideoEl.error;
+
     if (isThrottled || isPaused) {
-      utils.log(`  [heartbeat] gap=${(gap/1000).toFixed(1)}s paused=${isPaused}，尝试恢复`);
+      const state = `${isThrottled ? 'T' : '-'}${isPaused ? 'P' : '-'}`;
+      if (state !== lastHeartbeatLogState) {
+        utils.log(`  [heartbeat] gap=${(gap/1000).toFixed(1)}s paused=${isPaused}，尝试恢复`);
+        lastHeartbeatLogState = state;
+      }
       await resumePlayback();
+    } else {
+      lastHeartbeatLogState = null;
     }
   }, 5000);
 

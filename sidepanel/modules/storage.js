@@ -7,6 +7,8 @@
   const AUTO_MUTE_KEY = 'autoMute';
   const DISRUPT_LOCK_KEY = 'disruptLock';
 
+  // ⚠️ 新增配置字段必须同步加到 AI_CONFIG_DEFAULT，
+  //    否则 getAIConfig/saveAIConfig 的字段白名单会把它过滤掉
   const AI_CONFIG_DEFAULT = {
     apiKey: '',
     baseUrl: 'https://api.xiaomimimo.com/v1',
@@ -25,11 +27,25 @@
 
     async getAIConfig() {
       const r = await chrome.storage.local.get(AI_CONFIG_KEY);
-      return Object.assign({}, AI_CONFIG_DEFAULT, r[AI_CONFIG_KEY] || {});
+      const saved = r[AI_CONFIG_KEY] || {};
+      // ★ 修复 #17：只保留已知字段，其余用默认值兜底
+      // 同时剔除历史遗留的未知字段
+      const merged = {};
+      for (const k of Object.keys(AI_CONFIG_DEFAULT)) {
+        merged[k] = (typeof saved[k] !== 'undefined') ? saved[k] : AI_CONFIG_DEFAULT[k];
+      }
+      return merged;
     },
+
     async saveAIConfig(cfg) {
-      await chrome.storage.local.set({ [AI_CONFIG_KEY]: cfg });
+      // 保存时也做一次字段过滤，避免脏数据
+      const clean = {};
+      for (const k of Object.keys(AI_CONFIG_DEFAULT)) {
+        clean[k] = (typeof cfg[k] !== 'undefined') ? cfg[k] : AI_CONFIG_DEFAULT[k];
+      }
+      await chrome.storage.local.set({ [AI_CONFIG_KEY]: clean });
     },
+
     async getAutoAnswer() {
       const r = await chrome.storage.local.get(AUTO_ANSWER_KEY);
       return r[AUTO_ANSWER_KEY] === true;
@@ -37,6 +53,7 @@
     async setAutoAnswer(on) {
       await chrome.storage.local.set({ [AUTO_ANSWER_KEY]: !!on });
     },
+
     async getAutoMute() {
       const r = await chrome.storage.local.get(AUTO_MUTE_KEY);
       return r[AUTO_MUTE_KEY] === true;
@@ -44,10 +61,10 @@
     async setAutoMute(on) {
       await chrome.storage.local.set({ [AUTO_MUTE_KEY]: !!on });
     },
-    // ★ 防打扰锁
+
     async getDisruptLock() {
       const r = await chrome.storage.local.get(DISRUPT_LOCK_KEY);
-      return r[DISRUPT_LOCK_KEY] !== false;  // 默认开启
+      return r[DISRUPT_LOCK_KEY] !== false;
     },
     async setDisruptLock(on) {
       await chrome.storage.local.set({ [DISRUPT_LOCK_KEY]: !!on });

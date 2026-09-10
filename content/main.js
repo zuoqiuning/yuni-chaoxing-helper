@@ -86,12 +86,17 @@
     return { ok: true, method: 'reload' };
   }
 
+  // ★ 统一从 quiz 模块取判定，避免两处漂移
   function isQuizPage() {
+    if (CXH.quiz && typeof CXH.quiz.isQuizPage === 'function') {
+      return CXH.quiz.isQuizPage();
+    }
+    // quiz 模块未加载时的兜底
     if (/\/work\/dowork/.test(location.href)) return true;
-    if (document.querySelector('.stem_answer')) return true;
-    if (document.querySelector('.singleQuesId')) return true;
+    if (document.querySelector('.singleQuesId, .stem_answer, .questionLi')) return true;
     return false;
   }
+
   async function checkAndNotifyQuiz() {
     if (!isQuizPage()) return;
     await new Promise(r => setTimeout(r, 2500));
@@ -183,20 +188,22 @@
         console.log(`[CXH] FILL_QUIZ: 收到 ${answers.length} 个答案，页面 ${questions.length} 道题`);
 
         for (const ans of answers) {
+          // ★ 修复 #1：优先按 index 显式匹配，兜底才用下标
           const idx = typeof ans.index === 'number' ? ans.index
-                    : (typeof ans.id === 'number' ? ans.id : parseInt(ans.id, 10));
-          const q = questions[idx];
+          : (typeof ans.id === 'number' ? ans.id : parseInt(ans.id, 10));
+          const q = questions.find(x => x.index === idx);
+
           if (!q) {
-            console.warn(`[CXH] index=${idx} 超出范围`);
+            console.warn(`[CXH] 找不到题目 index=${idx}`);
             failed++;
             continue;
           }
           try {
             const ok = await CXH.quiz.fillAnswerAsync(q, ans.answer);
             if (ok) filled++;
-            else { console.warn(`[CXH] 填入失败: idx=${idx} answer="${ans.answer}"`); failed++; }
+            else { console.warn(`[CXH] 填入失败: index=${idx} answer="${ans.answer}"`); failed++; }
           } catch (e) {
-            console.warn(`[CXH] 异常 idx=${idx}:`, e);
+            console.warn(`[CXH] 异常 index=${idx}:`, e);
             failed++;
           }
         }
