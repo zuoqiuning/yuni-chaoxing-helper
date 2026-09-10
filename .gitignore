@@ -5,7 +5,7 @@ push-to-gitee.ps1
 push-to-gitee.bat
 pack.ps1
 pack.bat
-
+release.ps1
 # 导出产物
 项目代码.md
 *.zip
