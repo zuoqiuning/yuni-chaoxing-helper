@@ -45,20 +45,20 @@
 
     /**
      * 扫描全部卡片，支持多轮取并集
+     * ★ 默认 rounds 从 2 降到 1，减少超星 iframe 反复懒加载
      * @param {Object} opts { rounds: 扫描轮数 }
      */
     async scanAllCards(opts = {}) {
-      const rounds = opts.rounds || 2;
+      const rounds = opts.rounds || 1;
       const tabs = dom.getCardTabs();
       const originIdx = dom.getActiveCardIdx();
-      const jobMap = new Map();  // key -> job
+      const jobMap = new Map();
 
       for (let round = 0; round < rounds; round++) {
         for (let i = 0; i < tabs.length; i++) {
           const isActive = (i === originIdx);
           if (!isActive) {
             tabs[i].click();
-            // 等 attach 出现
             await utils.waitFor(() => dom.getAttachments().length > 0, { timeout: 5000 });
             await utils.sleep(round === 0 ? 900 : 500);
           } else {
@@ -78,7 +78,6 @@
             if (!prev) {
               jobMap.set(key, rec);
             } else {
-              // 状态取并集：done 只升不降
               if (prev.done && !rec.done) rec.done = true;
               jobMap.set(key, rec);
             }

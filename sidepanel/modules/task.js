@@ -49,7 +49,7 @@
     return true;
   }
 
-  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY) {
+  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY, completedCount) {
     let attempt = 0;
     let sectionDone = false;
 
@@ -59,7 +59,8 @@
 
       attempt++;
       U.log(`\n[${idx + 1}/${total}] [${s.label}] ${s.name}${attempt > 1 ? ` (第 ${attempt} 次尝试)` : ''}`);
-      U.setProgress(idx + 1, total, `第 ${idx + 1}/${total} 节 · ${s.label} ${s.name}`);
+      // ★ 进度按"已完成节数 / 待处理节总数"计算
+      U.setProgress(completedCount, total, `第 ${idx + 1}/${total} 节 · ${s.label} ${s.name}`);
       R.markSectionCurrent(s.id);
       SP.state.runningSectionId = s.id;
 
@@ -164,7 +165,7 @@
       pauseBtn.classList.remove('active');
     }
 
-    // ★ 同步锁设置到 content
+    // 同步锁设置到 content
     await S.sendToTab('SET_LOCK', { enabled: disruptLock }, 3000, tid);
 
     const MAX_SECTION_RETRY = 3;
@@ -191,6 +192,9 @@
 
         U.log(`\n=== 第 ${round + 1} 轮：待处理 ${todo.length} 节 ===`);
 
+        // ★ 本轮已完成节数（用于进度条）
+        let completedCount = 0;
+
         for (let i = 0; i < todo.length; i++) {
           if (!SP.state.running) break;
           if (!await tabStillAlive(tid)) {
@@ -198,8 +202,12 @@
             SP.state.running = false;
             break;
           }
-          await processOneSection(todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY);
+          const done = await processOneSection(
+            todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY, completedCount
+          );
+          if (done) completedCount++;
         }
+
         if (!SP.state.running) break;
       }
 
@@ -221,7 +229,7 @@
               let anyProgress = false;
               for (const s of finalTodo) {
                 if (!SP.state.running) break;
-                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2);
+                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2, 0);
                 if (done) anyProgress = true;
               }
               if (!anyProgress) { U.log('补救无进展，退出', 'err'); break; }
@@ -270,7 +278,6 @@
     if (tid) await S.sendToTab('STOP', {}, 5000, tid);
   }
 
-  // ★ 暂停/继续
   async function togglePause() {
     if (!SP.state.running) return;
     const tid = SP.state.runningTabId;
@@ -304,7 +311,6 @@
     }
   }
 
-  // ★ 被 ALERT 主动触发暂停
   async function pauseByAlert() {
     if (!SP.state.running) return;
     const tid = SP.state.runningTabId;

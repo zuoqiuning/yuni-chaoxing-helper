@@ -1,0 +1,80 @@
+/* ============================================================
+ * base.css — 设计变量 / reset / 滚动条
+ * ============================================================ */
+
+:root {
+  /* 主色 */
+  --primary: #1976d2;
+  --primary-dark: #1565c0;
+  --primary-light: #e3f2fd;
+  --primary-bg: #eef4fd;
+  --primary-grad: linear-gradient(135deg, #2196f3, #1976d2);
+
+  /* 语义色 */
+  --success: #34c759;
+  --success-dark: #2e7d32;
+  --success-bg: #e8f5e9;
+  --warning: #ff9800;
+  --warning-dark: #e65100;
+  --warning-bg: #fff8e1;
+  --danger: #ff3b30;
+  --danger-dark: #c62828;
+  --danger-bg: #ffebee;
+
+  /* 文字 */
+  --text: #1c1c1e;
+  --text-2: #3a3a3c;
+  --text-3: #666;
+  --text-4: #8e8e93;
+  --text-5: #b0b0b0;
+
+  /* 边框 */
+  --border: #f0f0f2;
+  --border-2: #e5e5ea;
+  --border-3: #d1d1d6;
+
+  /* 背景 */
+  --bg: #ffffff;
+  --bg-subtle: #fafafa;
+  --bg-hover: #f5f5f7;
+  --bg-active: #eef4fd;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,0.03);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.18);
+
+  /* 过渡 */
+  --t-fast: 0.12s ease;
+  --t: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 统一滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-3);
+  border-radius: 3px;
+  transition: background var(--t-fast);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-4); }

@@ -8,31 +8,40 @@
 
   let autoAnswering = false;
 
+  // ★ 刷新 AI 卡片的 UI 状态
+  function updateQuizUI() {
+    const count = (SP.state.quizQuestions || []).length;
+    const emptyEl = U.$('quiz-empty');
+    const readyEl = U.$('quiz-ready');
+    const statEl = U.$('quiz-stat');
+    const countEl = U.$('quiz-detail-count');
+
+    if (count === 0) {
+      if (emptyEl) emptyEl.style.display = 'block';
+      if (readyEl) readyEl.style.display = 'none';
+      if (statEl) statEl.textContent = '';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (readyEl) readyEl.style.display = 'flex';
+    if (statEl) statEl.textContent = `${count} 题`;
+    if (countEl) countEl.textContent = `共 ${count} 题`;
+  }
+
   async function scanQuiz(silent = false) {
     const res = await S.sendToTab('SCAN_QUIZ', {}, 15000);
     if (!res.ok) {
       if (!silent) U.log('扫描题目失败: ' + res.error, 'err');
+      SP.state.quizQuestions = [];
+      updateQuizUI();
       return null;
     }
 
     SP.state.quizQuestions = res.questions || [];
-    U.log(`发现 ${SP.state.quizQuestions.length} 道题目`);
-
-    const el = U.$('quiz');
-    if (el) el.innerHTML = SP.state.quizQuestions.map((q, i) => `
-      <div class="item quiz-item" data-index="${i}">
-        <span class="item-label">${i + 1}</span>
-        <span class="item-name" title="${U.escapeHtml(q.stem)}">${U.escapeHtml(q.stem.slice(0, 40))}...</span>
-        <span class="item-flag">待答</span>
-      </div>
-    `).join('');
-
-    const panel = U.$('quiz-panel');
-    if (panel) panel.style.display = 'block';
-    const empty = U.$('quiz-empty');
-    if (empty) empty.style.display = 'none';
-    U.$('quiz-stat').textContent = `${SP.state.quizQuestions.length} 题`;
-
+    if (SP.state.quizQuestions.length > 0) {
+      U.log(`发现 ${SP.state.quizQuestions.length} 道题目`);
+    }
+    updateQuizUI();
     return SP.state.quizQuestions;
   }
 
@@ -48,7 +57,7 @@
       return null;
     }
 
-    U.log(`正在请求 AI 答案…（模型: ${cfg.model}, 思考: ${cfg.thinkingType}）`);
+    U.log(`正在请求 AI 答案…（模型: ${cfg.model}）`);
     const result = await AI.askQuiz(SP.state.quizQuestions, cfg);
     if (!result.ok) {
       if (!silent) U.log('AI 请求失败: ' + result.error, 'err');
@@ -57,21 +66,8 @@
 
     const answers = result.answers || [];
     U.log(`AI 返回 ${answers.length} 个答案`);
-
-    answers.forEach(ans => {
-      const el = document.querySelector(`.quiz-item[data-index="${ans.index}"]`);
-      if (el) {
-        const flag = el.querySelector('.item-flag');
-        if (flag) {
-          flag.textContent = ans.answer;
-          flag.style.color = (ans.confidence || 0) > 0.8 ? '#2e7d32' : '#d32f2f';
-          flag.title = `置信度 ${((ans.confidence || 0) * 100).toFixed(0)}%`;
-        }
-      }
-    });
-
     SP.state.pendingAnswers = answers;
-    U.log('答案已显示', 'ok');
+    U.log('答案已就绪', 'ok');
     return answers;
   }
 
@@ -97,7 +93,7 @@
     autoAnswering = true;
 
     const btn = U.$('one-click');
-    if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+    if (btn) { btn.disabled = true; }
 
     try {
       U.log('=== 一键答题 ===', 'ok');
@@ -128,7 +124,7 @@
       U.log('异常: ' + e.message, 'err');
     } finally {
       autoAnswering = false;
-      if (btn) { btn.disabled = false; btn.textContent = '一键答题'; }
+      if (btn) { btn.disabled = false; }
     }
   }
 
@@ -136,11 +132,80 @@
     await oneClickAnswer();
   }
 
+  // ★ 题目详情弹窗
+  function showQuizDetailModal() {
+    const questions = SP.state.quizQuestions || [];
+    if (!questions.length) {
+      U.log('暂无题目可查看', 'err');
+      return;
+    }
+    const answers = SP.state.pendingAnswers || [];
+    const answerMap = {};
+    answers.forEach(a => { answerMap[a.index] = a; });
+
+    const typeLabelMap = {
+      single: '单选', multiple: '多选', judge: '判断',
+      fill: '填空', essay: '简答'
+    };
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const itemsHtml = questions.map((q, i) => {
+      const a = answerMap[q.index];
+      const typeLabel = typeLabelMap[q.type] || q.type || '题目';
+      let answerHtml;
+      if (a && a.answer !== undefined && a.answer !== null && a.answer !== '') {
+        const conf = (typeof a.confidence === 'number')
+          ? ` <span class="qdi-conf">${(a.confidence * 100).toFixed(0)}%</span>`
+          : '';
+        answerHtml = `<span class="qdi-answer">${U.escapeHtml(a.answer)}${conf}</span>`;
+      } else {
+        answerHtml = `<span class="qdi-answer empty">（未答）</span>`;
+      }
+
+      const optionsHtml = (q.options && q.options.length)
+        ? `<div class="qdi-options">
+             ${q.options.map(o => `<div class="qdi-opt">${U.escapeHtml(o.letter)}. ${U.escapeHtml(o.text)}</div>`).join('')}
+           </div>`
+        : '';
+
+      return `
+        <div class="quiz-detail-item">
+          <div class="qdi-head">
+            <span class="qdi-num">${i + 1}</span>
+            <span class="qdi-type">${U.escapeHtml(typeLabel)}</span>
+            ${answerHtml}
+          </div>
+          <div class="qdi-stem">${U.escapeHtml(q.stem || '(无题干)')}</div>
+          ${optionsHtml}
+        </div>
+      `;
+    }).join('');
+
+    overlay.innerHTML = `
+      <div class="modal quiz-detail-modal">
+        <div class="modal-title">题目详情 · 共 ${questions.length} 题</div>
+        <div class="quiz-detail-list">${itemsHtml}</div>
+        <div class="modal-buttons">
+          <button id="quiz-detail-close">关闭</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('#quiz-detail-close').onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  }
+
   SP.quiz = {
     scanQuiz: () => scanQuiz(false),
     askAiForQuiz: () => askAiForQuiz(false),
     fillQuizAnswers: () => fillQuizAnswers(false),
     oneClickAnswer,
-    autoAnswerFlow
+    autoAnswerFlow,
+    updateQuizUI,
+    showQuizDetailModal
   };
 })();

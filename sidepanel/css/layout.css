@@ -1,0 +1,38 @@
+/* ============================================================
+ * layout.css — 顶层布局（固定高度，不整体滚动）
+ * ============================================================ */
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---------- Body（卡片容器，不滚动） ---------- */
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 0;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+/* ---------- Footer ---------- */
+.app-footer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}

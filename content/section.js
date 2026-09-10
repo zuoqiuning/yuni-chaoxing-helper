@@ -89,7 +89,7 @@
       restartFlag = false;
       player.setStopped(false);
       player.setPaused(false);
-      player.setExpectedSectionId(expectedSectionId);  // ★
+      player.setExpectedSectionId(expectedSectionId);
 
       utils.log(`开始处理当前节，倍速 ${rate}x，最多 ${maxPasses} 轮${autoMute ? '（自动静音）' : ''}`);
 
@@ -125,7 +125,8 @@
         if (player.isStopped()) break;
 
         utils.log(`\n--- 第 ${pass + 1}/${maxPasses} 轮：开始扫描 ---`);
-        const allJobs = await jobs.scanAllCards({ rounds: pass === 0 ? 2 : 1 });
+        // ★ 扫描轮数从 2 降到 1，减少 iframe 懒加载触发
+        const allJobs = await jobs.scanAllCards({ rounds: 1 });
         const videoJobs = allJobs.filter(j => j.type === 'video');
         const unfinished = videoJobs.filter(j => !j.done);
 
