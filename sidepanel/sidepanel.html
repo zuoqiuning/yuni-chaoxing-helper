@@ -15,6 +15,13 @@
     </div>
   </div>
 
+  <div class="guide-banner" id="sleep-banner" style="display:none;">
+    <span class="guide-banner-icon">!</span>
+    <span class="guide-banner-text">建议关闭浏览器睡眠标签页</span>
+    <button class="guide-banner-btn" id="sleep-banner-btn">查看</button>
+    <button class="guide-banner-close" id="sleep-banner-close" title="不再提示">×</button>
+  </div>
+
   <div class="ai-banner warn" id="ai-banner">
     <span class="ai-banner-icon">●</span>
     <span class="ai-banner-text">未接入 AI 模型</span>
@@ -72,6 +79,7 @@
 
   <div class="footer">
     <button id="start" class="primary">开始刷课</button>
+    <button id="pause" disabled>暂停</button>
     <button id="stop" disabled>停止</button>
   </div>
 
@@ -83,6 +91,7 @@
   <script src="modules/quiz.js"></script>
   <script src="modules/settings.js"></script>
   <script src="modules/status.js"></script>
+  <script src="modules/guide.js"></script>
   <script src="modules/task.js"></script>
   <script src="sidepanel.js"></script>
 </body>

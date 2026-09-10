@@ -9,12 +9,16 @@
     return tab;
   }
 
-  async function sendToTab(type, payload = {}, timeoutMs = 10000) {
-    const tab = await getActiveTab();
-    if (!tab || !tab.id) return { ok: false, error: 'no active tab' };
+  async function sendToTab(type, payload = {}, timeoutMs = 10000, tabId = null) {
+    let tid = tabId;
+    if (!tid) {
+      const tab = await getActiveTab();
+      if (!tab || !tab.id) return { ok: false, error: 'no active tab' };
+      tid = tab.id;
+    }
     try {
       const res = await Promise.race([
-        chrome.tabs.sendMessage(tab.id, { type, payload }, { frameId: 0 }),
+        chrome.tabs.sendMessage(tid, { type, payload }, { frameId: 0 }),
         new Promise(r => setTimeout(() => r({ ok: false, error: 'timeout' }), timeoutMs))
       ]);
       return res || { ok: false, error: 'no response' };
@@ -23,31 +27,20 @@
     }
   }
 
-  async function waitContentScript(maxWaitMs = 20000) {
+  async function waitContentScript(maxWaitMs = 20000, tabId = null) {
     const start = Date.now();
     while (Date.now() - start < maxWaitMs) {
-      const res = await sendToTab('PING', {}, 1500);
+      const res = await sendToTab('PING', {}, 1500, tabId);
       if (res.ok && res.role === 'top') return true;
       await U.sleep(500);
     }
     return false;
   }
 
-  async function waitTabUrlContains(substr, maxMs = 25000) {
+  async function waitSectionChange(sectionId, maxMs = 25000, tabId = null) {
     const start = Date.now();
     while (Date.now() - start < maxMs) {
-      const tab = await getActiveTab();
-      if (tab && tab.url && tab.url.includes(substr)) return true;
-      await U.sleep(500);
-    }
-    return false;
-  }
-
-  // ★ 通过 content 内部状态判断节是否已切换（SPA 也能识别）
-  async function waitSectionChange(sectionId, maxMs = 25000) {
-    const start = Date.now();
-    while (Date.now() - start < maxMs) {
-      const res = await sendToTab('GET_CURRENT_SECTION', {}, 1500);
+      const res = await sendToTab('GET_CURRENT_SECTION', {}, 1500, tabId);
       if (res.ok) {
         if (res.sectionId === sectionId) return true;
         if (res.iframeKnowledgeId === sectionId) return true;
@@ -57,8 +50,8 @@
     return false;
   }
 
-  async function getCurrentSectionId() {
-    const res = await sendToTab('GET_CURRENT_SECTION', {}, 1500);
+  async function getCurrentSectionId(tabId = null) {
+    const res = await sendToTab('GET_CURRENT_SECTION', {}, 1500, tabId);
     return res.ok ? res.sectionId : null;
   }
 
@@ -73,34 +66,63 @@
         if (!silent) U.log('当前标签页不是学习通页面', 'err');
         return;
       }
-      const ready = await waitContentScript(8000);
+      const ready = await waitContentScript(8000, tab.id);
       if (!ready) {
         if (!silent) U.log('content script 未就绪，等待刷新', 'err');
         return;
       }
-
-      const sectionId = await getCurrentSectionId();
-
-      const catRes = await sendToTab('SCAN_CATALOG');
+      const sectionId = await getCurrentSectionId(tab.id);
+      const catRes = await sendToTab('SCAN_CATALOG', {}, 10000, tab.id);
       if (!catRes.ok) { U.log('目录扫描失败: ' + catRes.error, 'err'); return; }
       R.renderCatalog(catRes.catalog || [], sectionId);
-
-      const jobRes = await sendToTab('SCAN_SECTION', {}, 90000);
+      const jobRes = await sendToTab('SCAN_SECTION', {}, 90000, tab.id);
       if (!jobRes.ok) { U.log('任务点扫描失败: ' + jobRes.error, 'err'); return; }
       R.renderJobs(jobRes.jobs || []);
-
       if (!silent) U.log('扫描完成', 'ok');
     } finally {
       SP.state.scanning = false;
     }
   }
 
+  async function restartCurrent(tid = null) {
+    let tabId = tid;
+    if (!tabId) {
+      const tab = await getActiveTab();
+      if (!tab || !tab.id) return { ok: false, error: 'no active tab' };
+      tabId = tab.id;
+    }
+    const sectionId = await getCurrentSectionId(tabId);
+    U.log(`重启本节 (${sectionId})`);
+
+    const restartRes = await sendToTab('RESTART_SECTION', {}, 5000, tabId);
+    if (restartRes.ok) U.log('  已发送重启信号，等待重新处理…', 'ok');
+    else U.log('  重启信号发送失败: ' + restartRes.error, 'err');
+
+    await U.sleep(2000);
+    const catRes = await sendToTab('SCAN_CATALOG', {}, 10000, tabId);
+    if (catRes.ok) R.renderCatalog(catRes.catalog || [], sectionId);
+    const jobRes = await sendToTab('SCAN_SECTION', {}, 60000, tabId);
+    if (jobRes.ok) R.renderJobs(jobRes.jobs || []);
+    else return { ok: false, error: jobRes.error };
+    return { ok: true, sectionId };
+  }
+
+  // ★ 暂停/继续/锁
+  async function pause(tid = null) {
+    return await sendToTab('PAUSE', {}, 5000, tid);
+  }
+  async function resume(tid = null) {
+    return await sendToTab('RESUME', {}, 5000, tid);
+  }
+  async function setLock(enabled, tid = null) {
+    return await sendToTab('SET_LOCK', { enabled }, 3000, tid);
+  }
+
   SP.scan = {
     getActiveTab, sendToTab,
-    waitContentScript,
-    waitTabUrlContains,
-    waitSectionChange,
+    waitContentScript, waitSectionChange,
     getCurrentSectionId,
-    doScan
+    doScan, restartCurrent,
+    pause, resume, setLock
   };
 })();

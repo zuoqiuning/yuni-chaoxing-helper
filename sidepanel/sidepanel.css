@@ -348,3 +348,147 @@ body { display: flex; flex-direction: column; }
 }
 .ai-status.ok { display: block; background: #e8f5e9; color: #2e7d32; }
 .ai-status.err { display: block; background: #ffebee; color: #c62828; }
+/* ---------- 睡眠标签页引导 banner ---------- */
+.guide-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  font-size: 12px;
+  background: linear-gradient(90deg, #e3f2fd, #e8eaf6);
+  color: #1565c0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+.guide-banner-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1976d2;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.guide-banner-text {
+  flex: 1;
+  font-weight: 500;
+}
+.guide-banner-btn {
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.guide-banner-btn:hover { background: #1565c0; }
+.guide-banner-close {
+  background: none;
+  border: none;
+  color: #1565c0;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.guide-banner-close:hover { opacity: 1; }
+
+/* ---------- 引导弹窗 ---------- */
+.guide-modal {
+  width: 420px;
+  max-width: 92%;
+}
+.guide-body {
+  font-size: 12.5px;
+  color: #444;
+  line-height: 1.7;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.guide-body p {
+  margin-bottom: 14px;
+}
+.guide-section {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border-left: 3px solid #1976d2;
+}
+.guide-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1976d2;
+  margin-bottom: 6px;
+}
+.guide-section ol {
+  padding-left: 18px;
+  margin: 0;
+}
+.guide-section li {
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+.guide-section code {
+  background: #eef4fd;
+  color: #1565c0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Consolas", monospace;
+  font-size: 11px;
+}
+.guide-section strong {
+  color: #1976d2;
+}
+.guide-tip {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: #fff8e1;
+  color: #b26a00;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+.guide-tip code {
+  background: rgba(178, 106, 0, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Consolas", monospace;
+}
+.guide-modal .modal-buttons button#guide-close {
+  background: #1976d2;
+  border-color: #1976d2;
+  color: #fff;
+}
+.guide-modal .modal-buttons button#guide-close:hover {
+  background: #1565c0;
+  border-color: #1565c0;
+}
+/* ---------- 暂停按钮 ---------- */
+.footer button#pause {
+  background: #fff;
+  border-color: #1976d2;
+  color: #1976d2;
+}
+.footer button#pause:hover:not(:disabled) {
+  background: #eef4fd;
+}
+.footer button#pause.active {
+  background: #ff9800;
+  border-color: #ff9800;
+  color: #fff;
+}
+.footer button#pause.active:hover:not(:disabled) {
+  background: #f57c00;
+  border-color: #f57c00;
+}

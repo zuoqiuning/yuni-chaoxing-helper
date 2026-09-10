@@ -50,6 +50,12 @@
           </div>
         </div>
 
+        <div style="margin-top:16px;border-top:1px solid #f0f0f0;padding-top:12px;">
+          <button type="button" id="show-guide" style="width:100%;padding:7px 12px;border:1px solid #e5e5e5;border-radius:6px;background:#fff;color:#333;font-size:12.5px;font-weight:500;cursor:pointer;font-family:inherit;">
+            重新显示「睡眠标签页」引导
+          </button>
+        </div>
+
         <div id="ai-status" class="ai-status"></div>
 
         <div class="modal-buttons">
@@ -64,6 +70,15 @@
     const close = () => overlay.remove();
     overlay.querySelector('#ai-cancel').onclick = close;
     overlay.onclick = (e) => { if (e.target === overlay) close(); };
+
+    // 重新显示引导
+    overlay.querySelector('#show-guide').onclick = async () => {
+      close();
+      if (SP.guide && SP.guide.reset) {
+        await SP.guide.reset();
+        if (SP.guide.showGuideModal) SP.guide.showGuideModal();
+      }
+    };
 
     overlay.querySelector('#ai-save').onclick = async () => {
       const apiKey = overlay.querySelector('#ai-key').value.trim();
@@ -94,9 +109,7 @@
         statusEl.className = 'ai-status ok';
         statusEl.textContent = `✓ 验证通过（${model}）`;
         U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}）`, 'ok');
-        if (SP.status && SP.status.refreshAiBanner) {
-          SP.status.refreshAiBanner();
-        }
+        if (SP.status && SP.status.refreshAiBanner) SP.status.refreshAiBanner();
         setTimeout(close, 1200);
       } else {
         statusEl.className = 'ai-status err';

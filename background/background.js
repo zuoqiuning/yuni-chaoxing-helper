@@ -1,8 +1,5 @@
 'use strict';
 
-// ============================================================
-// 点扩展图标 → 打开侧边栏
-// ============================================================
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((err) => console.warn('[BG]', err));
@@ -18,13 +15,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   chrome.runtime.sendMessage({ type: 'TAB_UPDATED', tabId, url: tab.url }).catch(() => {});
 });
 
+// ★ 标签页关闭 → 通知 sidepanel
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.runtime.sendMessage({ type: 'TAB_CLOSED', tabId }).catch(() => {});
+});
+
 // ============================================================
 // 消息路由
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return false;
 
-  // ---- MiMo API 转发 ----
   if (msg.type === 'MIMO_CHAT') {
     callMiMo(msg.payload)
       .then(sendResponse)
@@ -32,7 +33,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ---- 系统通知 ----
   if (msg.type === 'NOTIFY') {
     try {
       chrome.notifications.create({
@@ -41,7 +41,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         title: msg.title || '屿宁学习助手',
         message: msg.message || ''
       }, () => {
-        // 忽略 lastError，避免报错
         if (chrome.runtime.lastError) {
           console.warn('[BG] 通知失败:', chrome.runtime.lastError.message);
         }
@@ -88,7 +87,4 @@ async function callMiMo({ apiKey, baseUrl, model, messages, thinkingType }) {
   return { ok: true, content, raw: data };
 }
 
-// ============================================================
-// 通知图标（1x1 透明 PNG，data URI）
-// ============================================================
 const ICON_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
