@@ -1,4 +1,11 @@
-# 屿宁学习助手
+# 屿宁学习助手屿宁学习助手
+
+![Version](https://img.shields.io/github/v/release/zuoqiuning/yuni-chaoxing-helper?label=version&color=blue)
+![License](https://img.shields.io/github/license/zuoqiuning/yuni-chaoxing-helper?color=green)
+![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chrome-blue)
+![Manifest](https://img.shields.io/badge/manifest-v3-orange)
+
+> 学习通任务点扫描、视频播放与 AI 答题辅助的浏览器扩展。
 
 学习通课程任务点自动扫描、视频播放管理与 AI 辅助答题的 Edge / Chrome 浏览器扩展。
 
