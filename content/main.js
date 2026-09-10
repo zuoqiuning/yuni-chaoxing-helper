@@ -60,7 +60,6 @@
       node.querySelector('.posCatalog_title'), node.querySelector('.posCatalog_sbar')
     ].filter(Boolean);
 
-    // ★ 标记：允许这次点击穿过防打扰锁
     window.__cxhInternalClick = true;
     try {
       for (const t of targets) {
@@ -88,15 +87,16 @@
   }
 
   function isQuizPage() {
-    if (/dowork/.test(location.href)) return true;
+    if (/\/work\/dowork/.test(location.href)) return true;
     if (document.querySelector('.stem_answer')) return true;
+    if (document.querySelector('.singleQuesId')) return true;
     return false;
   }
   async function checkAndNotifyQuiz() {
     if (!isQuizPage()) return;
     await new Promise(r => setTimeout(r, 2500));
     if (!isQuizPage()) return;
-    const count = document.querySelectorAll('.stem_answer, .singleQuesId').length;
+    const count = document.querySelectorAll('.singleQuesId, .stem_answer, .questionLi').length;
     try { chrome.runtime.sendMessage({ type: 'QUIZ_PAGE_DETECTED', count, url: location.href }); } catch (_) {}
   }
   setTimeout(checkAndNotifyQuiz, 500);
@@ -116,11 +116,21 @@
   async function handle(msg) {
     const { type, payload } = msg || {};
     switch (type) {
-      case 'PING': return { ok: true, role: 'top', url: location.href };
-      case 'SCAN_CATALOG': return { ok: true, catalog: CXH.catalog.scan() };
-      case 'SCAN_SECTION': return { ok: true, jobs: await CXH.jobs.scanAllCards() };
-      case 'PLAY_SECTION': return await CXH.section.processAllCards(payload?.rate || 2, payload || {});
-      case 'RESUME_PLAYBACK': return await CXH.player.resumePlayback();
+      case 'PING':
+        return { ok: true, role: 'top', url: location.href };
+
+      case 'SCAN_CATALOG':
+        return { ok: true, catalog: CXH.catalog.scan() };
+
+      case 'SCAN_SECTION':
+        return { ok: true, jobs: await CXH.jobs.scanAllCards() };
+
+      case 'PLAY_SECTION':
+        return await CXH.section.processAllCards(payload?.rate || 2, payload || {});
+
+      case 'RESUME_PLAYBACK':
+        return await CXH.player.resumePlayback();
+
       case 'RESTART_SECTION':
         if (CXH.section.requestRestart) {
           CXH.section.requestRestart();
@@ -128,14 +138,13 @@
         }
         return { ok: false, error: 'requestRestart not available' };
 
-      // ★ 暂停/继续
       case 'PAUSE':
         await CXH.player.pausePlayback();
         return { ok: true };
+
       case 'RESUME':
         return await CXH.player.resumeFromPause();
 
-      // ★ 防打扰锁开关
       case 'SET_LOCK':
         if (CXH.interceptor) {
           return CXH.interceptor.setLock(payload?.enabled === true);
@@ -147,30 +156,56 @@
         return { ok: true };
 
       case 'GET_CURRENT_SECTION':
-        return { ok: true, sectionId: getCurrentSectionId(), iframeKnowledgeId: getIframeKnowledgeId() };
-      case 'JUMP_SECTION': return await smartJump(payload.sectionId);
-      case 'IS_QUIZ_PAGE': return { ok: true, isQuiz: isQuizPage() };
+        return {
+          ok: true,
+          sectionId: getCurrentSectionId(),
+          iframeKnowledgeId: getIframeKnowledgeId()
+        };
+
+      case 'JUMP_SECTION':
+        return await smartJump(payload.sectionId);
+
+      case 'IS_QUIZ_PAGE':
+        return { ok: true, isQuiz: isQuizPage() };
+
       case 'SCAN_QUIZ': {
         if (!CXH.quiz) return { ok: false, error: 'quiz 模块未加载' };
         if (!CXH.quiz.isQuizPage()) return { ok: false, error: '当前页面不是答题页面' };
-        return { ok: true, questions: CXH.quiz.extractQuestions() };
+        const questions = CXH.quiz.extractQuestions();
+        return { ok: true, questions };
       }
+
       case 'FILL_QUIZ': {
         if (!CXH.quiz) return { ok: false, error: 'quiz 模块未加载' };
         const questions = CXH.quiz.extractQuestions();
         const answers = payload?.answers || [];
         let filled = 0, failed = 0;
+        console.log(`[CXH] FILL_QUIZ: 收到 ${answers.length} 个答案，页面 ${questions.length} 道题`);
+
         for (const ans of answers) {
-          const q = questions.find(x => x.id === ans.id);
-          if (!q) { failed++; continue; }
+          const idx = typeof ans.index === 'number' ? ans.index
+                    : (typeof ans.id === 'number' ? ans.id : parseInt(ans.id, 10));
+          const q = questions[idx];
+          if (!q) {
+            console.warn(`[CXH] index=${idx} 超出范围`);
+            failed++;
+            continue;
+          }
           try {
-            const ok = CXH.quiz.fillAnswer(q, ans.answer);
-            if (ok) filled++; else failed++;
-          } catch (e) { failed++; }
+            const ok = await CXH.quiz.fillAnswerAsync(q, ans.answer);
+            if (ok) filled++;
+            else { console.warn(`[CXH] 填入失败: idx=${idx} answer="${ans.answer}"`); failed++; }
+          } catch (e) {
+            console.warn(`[CXH] 异常 idx=${idx}:`, e);
+            failed++;
+          }
         }
+        console.log(`[CXH] FILL_QUIZ 结束: filled=${filled} failed=${failed}`);
         return { ok: true, filled, failed, total: questions.length };
       }
-      default: return { ok: false, error: 'unknown: ' + type };
+
+      default:
+        return { ok: false, error: 'unknown: ' + type };
     }
   }
 })();

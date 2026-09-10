@@ -58,12 +58,21 @@
       U.$('jobs').innerHTML = '<div class="empty">—</div>';
       return;
     }
-    if (/mooc2\/work\/dowork/.test(tab.url)) {
-      U.$('catalog').innerHTML = '<div class="empty">当前标签页是答题页</div>';
+
+    if (/work\/dowork/.test(tab.url) || /\/dowork/.test(tab.url)) {
+      U.$('catalog').innerHTML = '<div class="empty">当前标签页是作业/答题页<br><span style="font-size:11px;color:#1976d2;">请使用下方 AI 答题功能</span></div>';
       U.$('jobs').innerHTML = '<div class="empty">—</div>';
-      U.$('quiz-empty').textContent = '点击"扫描题目"开始';
+      U.$('quiz-empty').textContent = '点击"一键答题"开始';
+      U.$('start').disabled = true;
+      U.$('start').title = '作业页无法刷课';
       return;
     }
+
+    if (!SP.state.running) {
+      U.$('start').disabled = false;
+      U.$('start').title = '';
+    }
+
     await S.doScan(true);
   }
 
@@ -89,6 +98,7 @@
   U.$('start').onclick = () => Task.startAll();
   U.$('stop').onclick = () => Task.stopAll();
   if (U.$('pause')) U.$('pause').onclick = () => Task.togglePause();
+  if (U.$('one-click')) U.$('one-click').onclick = () => Quiz.oneClickAnswer();
   U.$('scan-quiz').onclick = () => Quiz.scanQuiz();
   U.$('ask-ai').onclick = () => Quiz.askAiForQuiz();
   U.$('fill-answers').onclick = () => Quiz.fillQuizAnswers();
@@ -121,7 +131,6 @@
       return;
     }
 
-    // ★ 登录过期 / 验证码 → 暂停任务 + 通知
     if (msg.type === 'ALERT') {
       const { alertType, detail } = msg;
       if (alertType === 'LOGIN_EXPIRED') {
