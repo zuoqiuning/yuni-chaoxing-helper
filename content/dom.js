@@ -20,6 +20,18 @@
       return this.getCardTabs().findIndex(t => t.classList.contains('active'));
     },
 
+    // ★★★ 新增：从 iframe.src 解析当前激活的 cardIndex
+    // 超星 iframe 结构：/knowledge/cards?...&num=0（num 从 0 开始）
+    getIframeCardIdx() {
+      const ifr = this.getCardsIframe();
+      if (!ifr || !ifr.src) return -1;
+      try {
+        const m = ifr.src.match(/[?&]num=(\d+)/);
+        if (m) return parseInt(m[1], 10);
+      } catch (_) {}
+      return -1;
+    },
+
     getAttachments() {
       const doc = this.getCardsDoc();
       if (!doc) return [];
@@ -30,6 +42,18 @@
       if (!attach) return null;
       for (const f of attach.querySelectorAll('iframe')) {
         if (/ananas\/modules\/video/.test(f.src || '')) return f;
+      }
+      return null;
+    },
+
+    getDocIframe(attach) {
+      if (!attach) return null;
+      for (const f of attach.querySelectorAll('iframe')) {
+        const src = f.src || '';
+        if (/ananas\/modules\/(pdf|doc)/.test(src) || /pan-yz\.chaoxing\.com/.test(src)) return f;
+      }
+      for (const f of attach.querySelectorAll('iframe')) {
+        if ((f.src || '') && f.src !== 'about:blank') return f;
       }
       return null;
     },

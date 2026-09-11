@@ -3,45 +3,6 @@
   window.SP = window.SP || {};
   const U = SP.utils;
 
-  function updateCatalogStat() {
-    const todo = SP.state.catalogCache.filter(i => !i.finished);
-    const el = U.$('catalog-stat');
-    if (el) el.textContent = `${SP.state.catalogCache.length} 节 · 未完成 ${todo.length}`;
-  }
-
-  function scrollToCurrentSection(sectionId) {
-    if (!sectionId) return;
-    if (SP.state.lastScrolledSectionId === sectionId) return;
-    SP.state.lastScrolledSectionId = sectionId;
-
-    setTimeout(() => {
-      const el = document.querySelector(`#catalog .item[data-section-id="${sectionId}"]`);
-      if (!el) return;
-      try {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } catch (_) {
-        el.scrollIntoView();
-      }
-    }, 60);
-  }
-
-  function renderCatalog(items, currentSectionId) {
-    SP.state.catalogCache = items;
-    const el = U.$('catalog');
-    const todo = items.filter(i => !i.finished);
-    U.$('catalog-stat').textContent = `${items.length} 节 · 未完成 ${todo.length}`;
-    if (!items.length) { el.innerHTML = '<div class="empty">无目录数据</div>'; return; }
-    el.innerHTML = items.map(i => `
-      <div class="item ${i.finished ? 'done' : ''} ${i.id === currentSectionId ? 'current' : ''}" data-section-id="${i.id}">
-        <span class="item-label">${U.escapeHtml(i.label)}</span>
-        <span class="item-name" title="${U.escapeHtml(i.name)}">${U.escapeHtml(i.name)}</span>
-        <span class="item-flag">${i.finished ? '✓' : ''}</span>
-      </div>
-    `).join('');
-
-    if (currentSectionId) scrollToCurrentSection(currentSectionId);
-  }
-
   function typeLabel(type) {
     if (type === 'video') return '视频';
     if (type === 'document') return '文档';
@@ -50,10 +11,55 @@
     return type || '未知';
   }
 
+  function isJobPlaying(cardIndex, job) {
+    if (SP.state.playingCardIdx === cardIndex
+        && SP.state.playingJobIdx === job.index) {
+      return true;
+    }
+    if (job.jobId && SP.state.playingJobId === job.jobId) {
+      return true;
+    }
+    if (job.playing) return true;
+    return false;
+  }
+
+  // ★★★ localDoneJobs 用 sectionId 前缀，跨节不串；不随 reset 清空
+  function _sKey(sectionId) {
+    return sectionId || SP.state.jobCardsSectionId || 'default';
+  }
+
+  function markLocalDone(sectionId, cardIndex, jobIndex, jobId) {
+    const ld = SP.state.localDoneJobs || (SP.state.localDoneJobs = {});
+    const s = _sKey(sectionId);
+    if (cardIndex != null && jobIndex != null) {
+      ld[`${s}:c${cardIndex}-i${jobIndex}`] = true;
+    }
+    if (jobId) {
+      ld[`${s}:j:${jobId}`] = true;
+    }
+  }
+
+  function isLocalDone(sectionId, cardIndex, jobIndex, jobId) {
+    const ld = SP.state.localDoneJobs || {};
+    const s = _sKey(sectionId);
+    if (cardIndex != null && jobIndex != null && ld[`${s}:c${cardIndex}-i${jobIndex}`]) return true;
+    if (jobId && ld[`${s}:j:${jobId}`]) return true;
+    return false;
+  }
+
+  // 权威完成 = 本地记录（本次会话播放过）
+  function isAuthoritativeDone(sectionId, cardIndex, job) {
+    if (isLocalDone(sectionId, cardIndex, job.index, job.jobId)) return true;
+    // content 侧发来的 localDone 字段（sessionStorage）
+    if (job.localDone) return true;
+    return false;
+  }
+
   function renderOneCardHtml(card) {
+    const sectionId = SP.state.jobCardsSectionId;
     const cJobs = card.jobs || [];
     const cTotal = cJobs.length;
-    const cDone = cJobs.filter(j => j.done).length;
+    const cDone = cJobs.filter(j => isAuthoritativeDone(sectionId, card.cardIndex, j)).length;
     const cUndone = cTotal - cDone;
 
     let cardName = card.cardText || '';
@@ -67,12 +73,17 @@
     const jobsHtml = cTotal === 0
       ? '<div class="job-card-empty">无任务点</div>'
       : cJobs.map((j, idx) => {
-          const cls = j.done ? 'done' : (j.playing ? 'playing' : 'pending');
-          const label = typeLabel(j.type);
-          const flag = j.done ? '✓' : (j.playing ? '▶' : '○');
           const fullId = j.jobId || j.objectId || '';
+          const done = isAuthoritativeDone(sectionId, card.cardIndex, j);
+          const playing = !done && isJobPlaying(card.cardIndex, j);
+          const cls = done ? 'done' : (playing ? 'playing' : 'pending');
+          const label = typeLabel(j.type);
+          const flag = done ? '✓' : (playing ? '▶' : '○');
           return `
-            <div class="item job-item ${cls}" data-job-id="${U.escapeHtml(fullId)}">
+            <div class="item job-item ${cls}"
+                 data-job-id="${U.escapeHtml(fullId)}"
+                 data-job-index="${j.index}"
+                 data-card-index="${card.cardIndex}">
               <span class="item-label">${U.escapeHtml(label)}</span>
               <span class="item-name" title="${U.escapeHtml(fullId)}">#${idx + 1}</span>
               <span class="item-flag">${flag}</span>
@@ -94,9 +105,13 @@
     `;
   }
 
-  // ★ 清空卡片面板
+  // ★ resetCardJobs 现在不清空 localDoneJobs
   function resetCardJobs() {
     SP.state.jobCards = [];
+    SP.state.playingCardIdx = null;
+    SP.state.playingJobIdx = null;
+    SP.state.playingJobId = null;
+    // ★★★ 不再清空 SP.state.localDoneJobs
     const el = U.$('jobs');
     if (el) el.innerHTML = '<div class="empty">加载中…</div>';
     const statEl = U.$('jobs-stat');
@@ -117,12 +132,13 @@
     }
 
     const sorted = [...cards].sort((a, b) => a.cardIndex - b.cardIndex);
+    const sectionId = SP.state.jobCardsSectionId;
 
     let totalJobs = 0, undoneJobs = 0;
     sorted.forEach(card => {
       const cJobs = card.jobs || [];
       totalJobs += cJobs.length;
-      undoneJobs += cJobs.filter(j => !j.done).length;
+      undoneJobs += cJobs.filter(j => !isAuthoritativeDone(sectionId, card.cardIndex, j)).length;
     });
 
     el.innerHTML = sorted.map(c => renderOneCardHtml(c)).join('');
@@ -131,13 +147,15 @@
     if (statEl) statEl.textContent = `${totalJobs} 个 · 未完成 ${undoneJobs}`;
   }
 
-  // ★ 更新单个卡片
   function updateOneCard(card, sectionId) {
     if (!card) return;
 
-    // ★★★ 检测节变化：如果 sectionId 变了，清空列表
+    // sectionId 变化时清空 current 数据但**保留 localDoneJobs**
     if (sectionId && SP.state.jobCardsSectionId && SP.state.jobCardsSectionId !== sectionId) {
-      resetCardJobs();
+      SP.state.jobCards = [];
+      SP.state.playingCardIdx = null;
+      SP.state.playingJobIdx = null;
+      SP.state.playingJobId = null;
     }
     if (sectionId) SP.state.jobCardsSectionId = sectionId;
 
@@ -163,15 +181,10 @@
         if (newEl) newEl.classList.add('active');
       }
     } else {
-      // 没有则重建列表
       if (container.querySelector('.empty')) container.innerHTML = '';
       renderCardJobs(SP.state.jobCards);
-      // 重建后恢复 active
-      const activeEl = container.querySelector(`.job-card-group[data-card-index="${card.cardIndex}"]`);
-      // 不自动加 active，由 CARD_ACTIVE 消息控制
     }
 
-    // 更新总统计
     let total = 0, undone = 0;
     document.querySelectorAll('#jobs .job-card-group').forEach(group => {
       const items = group.querySelectorAll('.job-item');
@@ -211,23 +224,57 @@
     renderCardJobs(Object.values(grouped));
   }
 
-  function markJobDone(jobId) {
-    const el = document.querySelector(`#jobs .job-item[data-job-id="${jobId}"]`);
+  function markJobPlaying(cardIndex, jobIndex, jobId) {
+    SP.state.playingCardIdx = (cardIndex != null) ? cardIndex : null;
+    SP.state.playingJobIdx = (jobIndex != null) ? jobIndex : null;
+    SP.state.playingJobId = jobId || null;
+
+    let el = null;
+    if (cardIndex != null && jobIndex != null) {
+      el = document.querySelector(
+        `#jobs .job-card-group[data-card-index="${cardIndex}"] .job-item[data-job-index="${jobIndex}"]`
+      );
+    }
+    if (!el && jobId) {
+      el = document.querySelector(`#jobs .job-item[data-job-id="${jobId}"]`);
+    }
+    if (el) {
+      el.classList.remove('pending', 'done');
+      el.classList.add('playing');
+      const f = el.querySelector('.item-flag');
+      if (f) f.textContent = '▶';
+    }
+  }
+
+  function markJobDone(jobId, cardIndex, jobIndex) {
+    // ★ 加 sectionId 前缀记录
+    markLocalDone(SP.state.jobCardsSectionId, cardIndex, jobIndex, jobId);
+
+    if (SP.state.playingJobId === jobId
+        || (cardIndex != null && jobIndex != null
+            && SP.state.playingCardIdx === cardIndex
+            && SP.state.playingJobIdx === jobIndex)) {
+      SP.state.playingCardIdx = null;
+      SP.state.playingJobIdx = null;
+      SP.state.playingJobId = null;
+    }
+
+    let el = null;
+    if (cardIndex != null && jobIndex != null) {
+      el = document.querySelector(
+        `#jobs .job-card-group[data-card-index="${cardIndex}"] .job-item[data-job-index="${jobIndex}"]`
+      );
+    }
+    if (!el && jobId) {
+      el = document.querySelector(`#jobs .job-item[data-job-id="${jobId}"]`);
+    }
     if (el) {
       el.classList.remove('pending', 'playing');
       el.classList.add('done');
-      const f = el.querySelector('.item-flag'); if (f) f.textContent = '✓';
+      const f = el.querySelector('.item-flag');
+      if (f) f.textContent = '✓';
     }
     updateCardStatLocal();
-  }
-
-  function markJobPlaying(jobId) {
-    const el = document.querySelector(`#jobs .job-item[data-job-id="${jobId}"]`);
-    if (el) {
-      el.classList.remove('pending');
-      el.classList.add('playing');
-      const f = el.querySelector('.item-flag'); if (f) f.textContent = '▶';
-    }
   }
 
   function updateCardStatLocal() {
@@ -252,39 +299,10 @@
 
   function updateCardStat() { updateCardStatLocal(); }
 
-  function markSectionDone(sectionId) {
-    if (!sectionId) return;
-    const items = SP.state.catalogCache;
-    const idx = items.findIndex(i => i.id === sectionId);
-    if (idx < 0) return;
-    if (items[idx].finished) return;
-    items[idx].finished = true;
-    const el = document.querySelector(`#catalog .item[data-section-id="${sectionId}"]`);
-    if (el) {
-      el.classList.remove('current');
-      el.classList.add('done');
-      const flag = el.querySelector('.item-flag');
-      if (flag) flag.textContent = '✓';
-    }
-    updateCatalogStat();
-  }
-
-  function markSectionCurrent(sectionId) {
-    U.qsa('#catalog .item.current').forEach(el => el.classList.remove('current'));
-    if (!sectionId) return;
-    const el = document.querySelector(`#catalog .item[data-section-id="${sectionId}"]`);
-    if (el) {
-      el.classList.add('current');
-      scrollToCurrentSection(sectionId);
-    }
-  }
-
-  SP.render = {
-    renderCatalog, renderJobs, renderCardJobs,
-    resetCardJobs, updateOneCard, markCardActive,
+  SP.jobs = {
+    renderJobs, renderCardJobs, resetCardJobs,
+    updateOneCard, markCardActive,
     markJobDone, markJobPlaying,
-    markSectionDone, markSectionCurrent,
-    updateCatalogStat, updateCardStat,
-    scrollToCurrentSection
+    updateCardStat
   };
 })();

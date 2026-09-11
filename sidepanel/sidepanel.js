@@ -10,9 +10,17 @@
   const R = SP.render;
   const Guide = SP.guide;
 
+  let lastTabUpdatedTime = 0;
+  const TAB_UPDATE_THROTTLE = 2500;
+
   function resetPanel() {
     SP.state.catalogCache = [];
     SP.state.currentJobs = [];
+    SP.state.jobCards = [];
+    SP.state.jobCardsSectionId = null;
+    SP.state.playingCardIdx = null;
+    SP.state.playingJobIdx = null;
+    SP.state.playingJobId = null;
     SP.state.quizQuestions = [];
     SP.state.pendingAnswers = [];
     SP.state.lastScrolledSectionId = null;
@@ -28,6 +36,23 @@
     }
     if ($('quiz-ready')) $('quiz-ready').style.display = 'none';
     if ($('quiz-stat')) $('quiz-stat').textContent = '';
+  }
+
+  // ★★★ 新增：重置所有按钮到初始状态
+  function resetButtons() {
+    const startBtn = U.$('start');
+    const stopBtn = U.$('stop');
+    const pauseBtn = U.$('pause');
+    if (startBtn) {
+      startBtn.disabled = false;
+      startBtn.title = '';
+    }
+    if (stopBtn) stopBtn.disabled = true;
+    if (pauseBtn) {
+      pauseBtn.disabled = true;
+      pauseBtn.textContent = '暂停';
+      pauseBtn.classList.remove('active');
+    }
   }
 
   async function handleTabChange(reason) {
@@ -67,7 +92,6 @@
         startBtn.disabled = true;
         startBtn.title = '作业页无法刷课';
       }
-      // 尝试自动扫描题目
       setTimeout(() => Quiz.scanQuiz(true), 800);
       return;
     }
@@ -77,19 +101,17 @@
       startBtn.title = '';
     }
 
-    await S.doScan(true);
+    await S.doScan(true, true);
   }
 
   SP.tabs = { handleTabChange, resetPanel };
 
-  // 按钮绑定（status.js 重建 banner 后会重新绑定 refresh/settings）
   U.$('start').onclick = () => Task.startAll();
   U.$('stop').onclick = () => Task.stopAll();
   if (U.$('pause')) U.$('pause').onclick = () => Task.togglePause();
   if (U.$('one-click')) U.$('one-click').onclick = () => Quiz.oneClickAnswer();
   if (U.$('quiz-detail')) U.$('quiz-detail').onclick = () => Quiz.showQuizDetailModal();
 
-  // 日志：清空 / 展开
   if (U.$('log-clear')) {
     U.$('log-clear').onclick = () => { const el = U.$('log'); if (el) el.innerHTML = ''; };
   }
@@ -131,7 +153,7 @@
     if (msg.type === 'ALERT') {
       const { alertType, detail } = msg;
       if (alertType === 'LOGIN_EXPIRED') {
-        U.log(`⚠ 检测到登录过期，任务已暂停。请重新登录后点"继续"`, 'err');
+        U.log(`⚠ 检测到登录过期，任务已暂停`, 'err');
         await Task.pauseByAlert();
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
@@ -139,7 +161,7 @@
           message: '登录已过期，请重新登录后点"继续"'
         });
       } else if (alertType === 'CAPTCHA') {
-        U.log(`⚠ 检测到验证码，任务已暂停。请处理后点"继续"`, 'err');
+        U.log(`⚠ 检测到验证码，任务已暂停`, 'err');
         U.log(`  详情: ${detail || '(无)'}`, 'err');
         await Task.pauseByAlert();
         chrome.runtime.sendMessage({
@@ -151,17 +173,47 @@
       return;
     }
 
-    const isBizMsg = ['LOG', 'JOB_DONE', 'JOB_PLAYING', 'SECTION_DONE', 'BLOCKED', 'QUIZ_PAGE_DETECTED'].includes(msg.type);
+    const isBizMsg = ['LOG', 'JOB_DONE', 'JOB_PLAYING', 'SECTION_DONE', 'BLOCKED', 'QUIZ_PAGE_DETECTED', 'CARD_JOBS', 'CARD_JOBS_UPDATE', 'CARD_ACTIVE', 'CARD_JOBS_RESET'].includes(msg.type);
     if (isBizMsg && sender && sender.tab && SP.state.runningTabId) {
       if (sender.tab.id !== SP.state.runningTabId) return;
     }
 
     if (msg.type === 'LOG') U.log(msg.text, msg.level || '');
-    if (msg.type === 'JOB_DONE') R.markJobDone(msg.jobId);
-    if (msg.type === 'JOB_PLAYING') R.markJobPlaying(msg.jobId);
+
+    if (msg.type === 'JOB_PLAYING') {
+      R.markJobPlaying(msg.cardIndex, msg.jobIndex, msg.jobId);
+    }
+
+    if (msg.type === 'JOB_DONE') {
+      R.markJobDone(msg.jobId, msg.cardIndex, msg.jobIndex);
+    }
+
+    if (msg.type === 'CARD_JOBS_RESET') {
+      R.resetCardJobs();
+      return;
+    }
+
+    if (msg.type === 'CARD_JOBS') {
+      if (msg.cards && msg.cards.length > 0) {
+        R.renderCardJobs(msg.cards);
+      }
+      return;
+    }
+
+    if (msg.type === 'CARD_JOBS_UPDATE') {
+      if (msg.card) {
+        R.updateOneCard(msg.card, msg.sectionId);
+      }
+      return;
+    }
+
+    if (msg.type === 'CARD_ACTIVE') {
+      R.markCardActive(msg.cardIndex);
+      return;
+    }
 
     if (msg.type === 'SECTION_DONE') {
-      if (!SP.state.running) setTimeout(() => S.doScan(true), 800);
+      if (!SP.state.running) setTimeout(() => S.doScan(true, true), 800);
     }
     if (msg.type === 'BLOCKED') {
       U.log(`⚠ 弹窗阻挡，请手动处理: ${msg.text}`, 'err');
@@ -172,9 +224,15 @@
       });
     }
     if (msg.type === 'TAB_UPDATED') {
+      const now = Date.now();
+      if (now - lastTabUpdatedTime < TAB_UPDATE_THROTTLE) return;
+      lastTabUpdatedTime = now;
+
       if (!SP.state.running) {
         const tab = await S.getActiveTab();
-        if (tab && msg.tabId === tab.id) setTimeout(() => S.doScan(true), 1200);
+        if (tab && msg.tabId === tab.id) {
+          setTimeout(() => S.doScan(true, true), 1200);
+        }
       }
     }
     if (msg.type === 'QUIZ_PAGE_DETECTED') {
@@ -185,26 +243,54 @@
       const cfg = await Store.getAIConfig();
 
       if (autoOn && cfg.apiKey) {
-        // 自动流程
         U.log(`检测到答题页（${msg.count} 题），开始自动答题…`, 'ok');
         Quiz.autoAnswerFlow();
       } else {
-        // 只扫描展示，等用户点按钮
         U.log(`检测到答题页（${msg.count} 题），点"一键答题"开始`, '');
         Quiz.scanQuiz(true);
       }
     }
   });
 
+  // ★★★ 重写 load 事件：无条件重置 + 主动清理 content 侧残留
   window.addEventListener('load', async () => {
+    // 1. 无条件重置 sidepanel 状态（修复重启扩展后的状态残留）
+    SP.state.running = false;
+    SP.state.runningTabId = null;
+    SP.state.runningSectionId = null;
+    U.setStatus(false);
+
+    // 2. 无条件重置按钮到初始
+    resetButtons();
+
+    // 3. 主动清理 content 侧残留状态（避免 interceptor 误拦截 + 视频挂着）
+    try {
+      const tab = await S.getActiveTab();
+      if (tab && tab.url && tab.url.includes('chaoxing.com')) {
+        const r = await S.sendToTab('CLEAR_STATE', {}, 2500);
+        if (r && r.ok) {
+          console.log('[SP] 已清理 content 侧状态');
+        }
+      }
+    } catch (e) {
+      console.warn('[SP] CLEAR_STATE 失败:', e);
+    }
+
+    // 4. 刷新 banner + 引导
     if (SP.status && SP.status.refreshAiBanner) await SP.status.refreshAiBanner();
     if (SP.guide && SP.guide.checkShowBanner) await SP.guide.checkShowBanner();
-    setTimeout(() => handleTabChange('init'), 400);
+
+    // 5. 最后进入主流程（此时状态已干净）
+    handleTabChange('init');
   });
 
   chrome.tabs.onActivated.addListener(() => setTimeout(() => handleTabChange('activated'), 300));
   chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!changeInfo.url && changeInfo.status !== 'complete') return;
+    const now = Date.now();
+    if (now - lastTabUpdatedTime < TAB_UPDATE_THROTTLE) return;
+    lastTabUpdatedTime = now;
+
     S.getActiveTab().then(t => {
       if (t && t.id === tabId) setTimeout(() => handleTabChange('updated'), 500);
     });

@@ -86,12 +86,10 @@
     return { ok: true, method: 'reload' };
   }
 
-  // ★ 统一从 quiz 模块取判定，避免两处漂移
   function isQuizPage() {
     if (CXH.quiz && typeof CXH.quiz.isQuizPage === 'function') {
       return CXH.quiz.isQuizPage();
     }
-    // quiz 模块未加载时的兜底
     if (/\/work\/dowork/.test(location.href)) return true;
     if (document.querySelector('.singleQuesId, .stem_answer, .questionLi')) return true;
     return false;
@@ -124,11 +122,39 @@
       case 'PING':
         return { ok: true, role: 'top', url: location.href };
 
+      case 'IS_RUNNING':
+        return {
+          ok: true,
+          running: (CXH.section && CXH.section.isRunning) ? CXH.section.isRunning() : false
+        };
+
+      case 'CLEAR_STATE':
+        if (CXH.section && CXH.section.clearState) {
+          CXH.section.clearState();
+        }
+        return { ok: true };
+
+      // ★★★ 新增：清空指定节的进度（重试时调用）
+      case 'CLEAR_SECTION_PROGRESS': {
+        const sid = payload?.sectionId;
+        if (sid && CXH.sectionCore && CXH.sectionCore.clearProgress) {
+          CXH.sectionCore.clearProgress(sid);
+          console.log(`[CXH] 已清空节进度: ${sid}`);
+          return { ok: true };
+        }
+        return { ok: false, error: 'invalid sectionId or clearProgress unavailable' };
+      }
+
       case 'SCAN_CATALOG':
         return { ok: true, catalog: CXH.catalog.scan() };
 
-      case 'SCAN_SECTION':
+      case 'SCAN_SECTION': {
+        const currentOnly = payload?.currentOnly === true;
+        if (currentOnly && CXH.jobs.scanCurrent) {
+          return { ok: true, jobs: await CXH.jobs.scanCurrent() };
+        }
         return { ok: true, jobs: await CXH.jobs.scanAllCards() };
+      }
 
       case 'PLAY_SECTION':
         return await CXH.section.processAllCards(payload?.rate || 2, payload || {});
@@ -158,6 +184,9 @@
 
       case 'STOP':
         CXH.player.setStopped(true);
+        if (CXH.section && CXH.section.clearState) {
+          try { CXH.section.clearState(); } catch (_) {}
+        }
         return { ok: true };
 
       case 'GET_CURRENT_SECTION':
@@ -188,7 +217,6 @@
         console.log(`[CXH] FILL_QUIZ: 收到 ${answers.length} 个答案，页面 ${questions.length} 道题`);
 
         for (const ans of answers) {
-          // ★ 修复 #1：优先按 index 显式匹配，兜底才用下标
           const idx = typeof ans.index === 'number' ? ans.index
           : (typeof ans.id === 'number' ? ans.id : parseInt(ans.id, 10));
           const q = questions.find(x => x.index === idx);

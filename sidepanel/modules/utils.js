@@ -9,9 +9,16 @@
     scanning: false,
     currentJobs: [],
     catalogCache: [],
+    jobCards: [],
+    jobCardsSectionId: null,
     quizQuestions: [],
     pendingAnswers: [],
-    lastScrolledSectionId: null
+    lastScrolledSectionId: null,
+    playingCardIdx: null,
+    playingJobIdx: null,
+    playingJobId: null,
+    // ★★★ localDoneJobs 不再被 reset 清空，key 带 sectionId 前缀
+    localDoneJobs: {}
   };
 
   SP.utils = {
@@ -56,7 +63,6 @@
       dot.title = run ? '运行中' : '空闲';
     },
 
-    // ★ 进度条已移除，保留空函数避免调用方报错
     setProgress() { /* no-op */ },
 
     sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

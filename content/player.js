@@ -11,7 +11,7 @@
   let currentVideoEl = null;
   let currentVideoIframe = null;
   let expectedSectionId = null;
-  let lastHeartbeatLogState = null;
+  let lastThrottleLogState = null;
 
   function applyRate(v, pl, rate) {
     try {
@@ -20,7 +20,6 @@
     } catch (_) {}
   }
 
-  // ★ 清理旧的 rate hook，避免每个视频元素累积定时器
   function installRateHook(v, pl, rate) {
     if (!v || v.__cxhRateHooked) return;
     v.__cxhRateHooked = true;
@@ -28,7 +27,6 @@
     v.addEventListener('ratechange', () => setTimeout(() => applyRate(v, pl, rate), 0));
 
     const intervalId = setInterval(() => {
-      // 视频已卸载 / 已从 DOM 移除 → 自清理
       if (!v.isConnected) {
         clearInterval(intervalId);
         return;
@@ -221,7 +219,16 @@
     }
   }
 
-  // ★ pause guard：3s 冷却 + 800ms 延迟 + isConnected 检查
+  function canSafelyRecover(v) {
+    if (!v || !v.isConnected) return false;
+    if (v.error) return false;
+    if (v.ended) return false;
+    if (!v.currentSrc && !v.src) return false;
+    if (v.readyState < 2) return false;
+    if (!v.duration || isNaN(v.duration) || v.duration <= 0) return false;
+    return true;
+  }
+
   function hookPauseGuard(v) {
     if (!v || v.__cxhPauseGuardHooked) return;
     v.__cxhPauseGuardHooked = true;
@@ -229,31 +236,33 @@
     let lastRecover = 0;
 
     v.addEventListener('pause', () => {
-      // 主动暂停不恢复
       if (stopped || paused || interrupted) return;
       if (v.ended) return;
       if (v.error) return;
       if (!v.duration || isNaN(v.duration) || v.duration <= 0) return;
 
-      // ★ 冷却：3 秒内不重复恢复，避免和超星快速对撞
       const now = Date.now();
-      if (now - lastRecover < 3000) return;
+      if (now - lastRecover < 1500) return;
       lastRecover = now;
 
-      // ★ 延迟 800ms，给 videojs 切源留时间
       setTimeout(() => {
         if (!v.paused) return;
         if (stopped || paused || interrupted) return;
         if (v.ended || v.error) return;
         if (!v.isConnected) return;
+        if (!canSafelyRecover(v)) return;
         try {
           v.muted = true;
           v.play().catch(() => {});
         } catch (_) {}
-      }, 800);
+      }, 400);
     });
 
-    console.log('[CXH] pause guard hooked');
+    v.addEventListener('play', () => {
+      lastRecover = 0;
+    });
+
+    console.log('[CXH] pause guard hooked (fast)');
   }
 
   async function resumePlayback() {
@@ -279,6 +288,9 @@
       }
     }
     if (v.paused) {
+      if (!canSafelyRecover(v)) {
+        return { ok: false, error: 'video 未就绪' };
+      }
       const r = await safePlay(v, true);
       if (r.ok) return { ok: true, playing: !v.paused };
       return { ok: false, error: r.error };
@@ -303,16 +315,30 @@
     return { ok: true };
   }
 
+  // ★★★ 修复：不再等待 v.play() resolve，最多等 800ms
   async function resumeFromPause() {
     paused = false;
     if (!currentVideoEl) return { ok: false, error: '没有正在播放的视频' };
     const v = currentVideoEl;
     if (v.ended) return { ok: true, alreadyDone: true };
-    if (v.paused) {
-      const r = await safePlay(v, true);
-      return r.ok ? { ok: true, playing: !v.paused } : { ok: false, error: r.error };
+    if (!v.paused) return { ok: true, alreadyPlaying: true };
+    if (v.error) {
+      // 有错，走完整恢复流程
+      return await resumePlayback();
     }
-    return { ok: true, alreadyPlaying: true };
+
+    // ★ 立即触发 play（不等待）
+    try { v.muted = true; } catch (_) {}
+    v.play().catch(() => {});
+
+    // ★ 最多等 800ms 确认状态变化
+    const start = Date.now();
+    while (Date.now() - start < 800) {
+      if (!v.paused) break;
+      await utils.sleep(100);
+    }
+
+    return { ok: true, playing: !v.paused };
   }
 
   const player = {
@@ -334,7 +360,6 @@
     async playJob(videoIframe, rate, autoMute) {
       interrupted = false;
 
-      // ★ 清理上一个 video 元素的 rate hook，避免 1s 空窗
       if (currentVideoEl && currentVideoEl.__cxhRateInterval) {
         clearInterval(currentVideoEl.__cxhRateInterval);
         currentVideoEl.__cxhRateInterval = null;
@@ -364,7 +389,7 @@
       }
 
       applyRate(v, pl, rate);
-      installRateHook(v, pl, rate);   // ★ 用统一入口安装
+      installRateHook(v, pl, rate);
 
       if (v.paused) {
         const resume = await safePlay(v, autoMute === true);
@@ -428,7 +453,7 @@
           }
           if (v.paused && !v.ended && v.currentTime < v.duration - 1) {
             pausedCount++;
-            if (pausedCount >= 3) {  // ★ 9 秒后恢复（原为 2，即 6 秒）
+            if (pausedCount >= 3) {
               safePlay(v, true).catch(() => {});
               pausedCount = 0;
             }
@@ -441,34 +466,62 @@
     }
   };
 
-  document.addEventListener('visibilitychange', async () => {
+  document.addEventListener('visibilitychange', () => {
     if (document.hidden || stopped || paused) return;
     if (!currentVideoEl) return;
-    const r = await resumePlayback();
-    if (r.ok && !r.alreadyPlaying) utils.log(`  [visibility] 恢复成功`, 'ok');
+    if (!currentVideoEl.paused) return;
+    resumePlayback().catch(() => {});
   });
 
   let lastHeartbeat = Date.now();
-  setInterval(async () => {
+  setInterval(() => {
     const now = Date.now();
     const gap = now - lastHeartbeat;
     lastHeartbeat = now;
+
     if (stopped || paused) return;
     if (!currentVideoEl) return;
-    const isThrottled = gap > 15000;
-    const isPaused = currentVideoEl.paused && !currentVideoEl.ended && !currentVideoEl.error;
 
-    if (isThrottled || isPaused) {
-      const state = `${isThrottled ? 'T' : '-'}${isPaused ? 'P' : '-'}`;
-      if (state !== lastHeartbeatLogState) {
-        utils.log(`  [heartbeat] gap=${(gap/1000).toFixed(1)}s paused=${isPaused}，尝试恢复`);
-        lastHeartbeatLogState = state;
-      }
-      await resumePlayback();
-    } else {
-      lastHeartbeatLogState = null;
+    const isThrottled = gap > 8000;
+    if (!isThrottled) {
+      lastThrottleLogState = null;
+      return;
     }
-  }, 5000);
+
+    if (!canSafelyRecover(currentVideoEl)) return;
+
+    if (!lastThrottleLogState) {
+      utils.log(`  [heartbeat] 检测到节流 gap=${(gap/1000).toFixed(1)}s，恢复播放`);
+      lastThrottleLogState = 'T';
+    }
+    resumePlayback().catch(() => {});
+  }, 3000);
+
+  let lastVideoTime = -1;
+  let stuckTicks = 0;
+  setInterval(() => {
+    if (stopped || paused) { stuckTicks = 0; lastVideoTime = -1; return; }
+    const v = currentVideoEl;
+    if (!v) { stuckTicks = 0; lastVideoTime = -1; return; }
+    if (v.ended || v.error) { stuckTicks = 0; lastVideoTime = -1; return; }
+    if (!canSafelyRecover(v)) { stuckTicks = 0; lastVideoTime = v.currentTime; return; }
+
+    if (lastVideoTime >= 0 && Math.abs(v.currentTime - lastVideoTime) < 0.3) {
+      stuckTicks++;
+      if (stuckTicks >= 3) {
+        utils.log(`  [stuck] currentTime 停在 ${v.currentTime.toFixed(1)}s，强制恢复`);
+        stuckTicks = 0;
+        lastVideoTime = -1;
+        try {
+          v.muted = true;
+          v.play().catch(() => {});
+        } catch (_) {}
+      }
+    } else {
+      stuckTicks = 0;
+    }
+    lastVideoTime = v.currentTime;
+  }, 2000);
 
   CXH.player = player;
 })();

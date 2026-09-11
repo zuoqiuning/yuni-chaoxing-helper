@@ -1,6 +1,5 @@
 /* ============================================================
- * components.css — 卡片 / 按钮 / 列表 / banner
- * （已移除进度条相关样式）
+ * components.css — 卡片 / 按钮 / 列表 / 任务点分组 / banner
  * ============================================================ */
 
 /* ================== CARD ================== */
@@ -14,7 +13,6 @@
   overflow: hidden;
 }
 
-/* 卡片高度分配 */
 .card-catalog { flex: 2 1 0; min-height: 110px; }
 .card-jobs    { flex: 1 1 0; min-height: 80px; }
 .card-quiz    { flex: 0 0 auto; }
@@ -200,10 +198,7 @@
 }
 
 /* ================== LIST ================== */
-.list {
-  display: flex;
-  flex-direction: column;
-}
+.list { display: flex; flex-direction: column; }
 
 .item {
   display: grid;
@@ -254,8 +249,110 @@
 #catalog .item.current .item-label { color: var(--primary); }
 #catalog .item.current .item-name { color: var(--primary-dark); font-weight: 500; }
 
-/* Job 状态 */
-.job-item.pending { background: var(--bg-subtle); }
+/* ================== ★ 任务点卡片分组 ================== */
+.job-card-group {
+  margin-bottom: 8px;
+  background: var(--bg-subtle);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: all var(--t-fast);
+}
+.job-card-group:last-child { margin-bottom: 0; }
+
+/* ★ 当前正在处理的卡片：高亮边框 */
+.job-card-group.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(25,118,210,0.18), 0 2px 6px rgba(25,118,210,0.12);
+  background: linear-gradient(180deg, #f6faff, var(--bg-subtle));
+}
+.job-card-group.active .job-card-title {
+  background: linear-gradient(90deg, var(--primary-bg), #f6faff);
+  border-bottom-color: rgba(25,118,210,0.2);
+}
+.job-card-group.active .job-card-badge {
+  animation: badgePulse 1.8s ease-in-out infinite;
+}
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(25,118,210,0.4); }
+  50%      { box-shadow: 0 0 0 4px rgba(25,118,210,0.08); }
+}
+
+.job-card-group.complete {
+  background: linear-gradient(90deg, #f5faf6, #fafcfb);
+  border-color: #d8ebda;
+}
+.job-card-group.complete.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(25,118,210,0.18), 0 2px 6px rgba(25,118,210,0.12);
+}
+
+.job-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.job-card-group.complete .job-card-title {
+  background: #f5faf6;
+  color: var(--success-dark);
+}
+
+.job-card-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  background: var(--primary-grad);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.job-card-group.complete .job-card-badge {
+  background: linear-gradient(135deg, #34c759, #2e7d32);
+}
+
+.job-card-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: inherit;
+}
+
+.job-card-stat {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+.job-card-group.complete .job-card-stat {
+  color: var(--success-dark);
+}
+
+.job-card-body { padding: 3px; }
+
+.job-card-empty {
+  font-size: 11px;
+  color: var(--text-5);
+  padding: 8px 10px;
+  font-style: italic;
+  text-align: center;
+}
+
+/* Job 状态（在分组内） */
+.job-item {
+  background: #fff;
+  border-radius: 4px;
+}
+.job-item.pending { background: #fff; }
 .job-item.playing {
   background: linear-gradient(90deg, var(--primary-bg), #f6faff);
   box-shadow: inset 0 0 0 1px rgba(25,118,210,0.18);
@@ -268,10 +365,11 @@
   50%      { background: linear-gradient(90deg, #e3eefc, #eef5fd); }
 }
 .job-item.done {
-  background: linear-gradient(90deg, #f5faf6, #fafcfb);
+  background: #fafcfb;
   opacity: 0.7;
 }
 .job-item.done:hover { opacity: 1; }
+.job-item.done .item-flag { color: var(--success); }
 
 /* ================== EMPTY ================== */
 .empty {
@@ -282,7 +380,7 @@
   line-height: 1.6;
 }
 
-/* ================== AI BANNER (含工具栏) ================== */
+/* ================== AI BANNER ================== */
 .ai-banner {
   display: flex;
   align-items: center;
@@ -322,7 +420,6 @@
 }
 .ai-banner-action { font-weight: 600; }
 
-/* ================== BANNER 工具区 ================== */
 .banner-tools {
   display: flex;
   align-items: center;

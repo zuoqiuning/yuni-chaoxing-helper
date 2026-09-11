@@ -22,7 +22,7 @@
   async function ensureOnSection(expectedId, tid, context) {
     const actual = await S.getCurrentSectionId(tid);
     if (actual === expectedId) return { ok: true, method: 'already' };
-    U.log(`  [sync${context ? ':' + context : ''}] 节不一致 (期望=${expectedId} 实际=${actual})，切回`);
+    U.log(`  [sync${context ? ':' + context : ''}] 节不一致，切回`);
     await S.sendToTab('JUMP_SECTION', { sectionId: expectedId }, 12000, tid);
     const ok = await S.waitSectionChange(expectedId, 18000, tid);
     if (ok) {
@@ -49,7 +49,7 @@
     return true;
   }
 
-  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY, completedCount) {
+  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY) {
     let attempt = 0;
     let sectionDone = false;
 
@@ -58,9 +58,16 @@
       if (!await tabStillAlive(tid)) break;
 
       attempt++;
-      U.log(`\n[${idx + 1}/${total}] [${s.label}] ${s.name}${attempt > 1 ? ` (第 ${attempt} 次尝试)` : ''}`);
-      // ★ 进度按"已完成节数 / 待处理节总数"计算
-      U.setProgress(completedCount, total, `第 ${idx + 1}/${total} 节 · ${s.label} ${s.name}`);
+
+      // ★ 重试时清空 content 侧进度
+      if (attempt > 1) {
+        U.log(`  清空本节进度记录（第 ${attempt} 次重试）`);
+        try {
+          await S.sendToTab('CLEAR_SECTION_PROGRESS', { sectionId: s.id }, 3000, tid);
+        } catch (_) {}
+      }
+
+      U.log(`\n[${idx + 1}/${total}] [${s.label}] ${s.name}${attempt > 1 ? ` (第 ${attempt} 次)` : ''}`);
       R.markSectionCurrent(s.id);
       SP.state.runningSectionId = s.id;
 
@@ -73,13 +80,12 @@
       const ready = await S.waitContentScript(15000, tid);
       if (!ready) { await U.sleep(2000); continue; }
 
-      const jobRes = await S.sendToTab('SCAN_SECTION', {}, 90000, tid);
-      if (jobRes.ok) R.renderJobs(jobRes.jobs || []);
-      else U.log('  本节任务点扫描失败: ' + jobRes.error, 'err');
+      const trustDone = attempt === 1;
 
       const res = await S.sendToTab('PLAY_SECTION', {
-        rate: 2, maxRetry: 3, maxPasses: 2, autoMute,
-        expectedSectionId: s.id
+        rate: 2, maxRetry: 3, autoMute,
+        expectedSectionId: s.id,
+        trustDone
       }, 3600000, tid);
 
       if (!res) { await U.sleep(2000); continue; }
@@ -91,48 +97,30 @@
       }
 
       if (res.sectionChanged) {
-        U.log(`  本节被切换打断，准备切回并重试…`, 'err');
+        U.log(`  本节被切换打断`, 'err');
         const sync = await ensureOnSection(s.id, tid, 'retry');
-        if (!sync.ok) U.log('  切回失败，稍后重试', 'err');
+        if (!sync.ok) U.log('  切回失败', 'err');
         await U.sleep(2000);
         continue;
       }
 
-      if (res.ok) {
-        const level = res.total > 0 && res.done === res.total ? 'ok' : '';
-        U.log(`本节完成: ${res.done}/${res.total}`, level);
-      } else {
-        U.log(`本节异常: ${res.error || 'unknown'}`, 'err');
-      }
-
-      await U.sleep(2500);
-      const sync = await ensureOnSection(s.id, tid, 'recheck');
-      if (!sync.ok) { await U.sleep(2000); continue; }
-
-      const recheck = await S.sendToTab('SCAN_CATALOG', {}, 15000, tid);
-      if (!recheck.ok) { await U.sleep(2000); continue; }
-
-      const updated = (recheck.catalog || []).find(x => x.id === s.id);
-      R.renderCatalog(recheck.catalog || [], s.id);
-
-      if (updated && updated.finished) {
-        U.log(`✓ [${s.label}] 服务端已确认完成`, 'ok');
+      if (res.sectionDone) {
+        U.log(`✓ [${s.label}] 完成: ${res.done}/${res.total}`, 'ok');
         R.markSectionDone(s.id);
-        sectionDone = true;
         return true;
       }
 
-      U.log(`⚠ [${s.label}] 服务端未标记完成`, 'err');
+      U.log(`⚠ [${s.label}] 未完成`, 'err');
       if (attempt < MAX_SECTION_RETRY) {
         U.log(`  准备第 ${attempt + 1} 次重试…`);
         await U.sleep(3000);
       }
     }
 
-    if (!sectionDone && attempt >= MAX_SECTION_RETRY) {
+    if (!sectionDone) {
       U.log(`[${s.label}] 已达最大重试 ${MAX_SECTION_RETRY} 次，跳过`, 'err');
     }
-    return sectionDone;
+    return false;
   }
 
   async function startAll() {
@@ -165,7 +153,6 @@
       pauseBtn.classList.remove('active');
     }
 
-    // 同步锁设置到 content
     await S.sendToTab('SET_LOCK', { enabled: disruptLock }, 3000, tid);
 
     const MAX_SECTION_RETRY = 3;
@@ -174,6 +161,19 @@
     try {
       U.log('=== 开始执行 ===', 'ok');
       await S.sendToTab('STOP', {}, 5000, tid);
+
+      // ★★★ 关键修复：先拉取目录，清空所有待处理节的 sessionStorage 进度
+      U.log('清理历史进度…');
+      const initCat = await S.sendToTab('SCAN_CATALOG', {}, 15000, tid);
+      if (initCat.ok && initCat.catalog) {
+        const toClear = initCat.catalog.filter(i => !i.finished);
+        for (const sec of toClear) {
+          try {
+            await S.sendToTab('CLEAR_SECTION_PROGRESS', { sectionId: sec.id }, 2000, tid);
+          } catch (_) {}
+        }
+        U.log(`  已清空 ${toClear.length} 个待处理节的进度`, 'ok');
+      }
 
       for (let round = 0; round < MAX_GLOBAL_ROUNDS; round++) {
         if (!SP.state.running) break;
@@ -192,9 +192,6 @@
 
         U.log(`\n=== 第 ${round + 1} 轮：待处理 ${todo.length} 节 ===`);
 
-        // ★ 本轮已完成节数（用于进度条）
-        let completedCount = 0;
-
         for (let i = 0; i < todo.length; i++) {
           if (!SP.state.running) break;
           if (!await tabStillAlive(tid)) {
@@ -202,16 +199,11 @@
             SP.state.running = false;
             break;
           }
-          const done = await processOneSection(
-            todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY, completedCount
-          );
-          if (done) completedCount++;
+          await processOneSection(todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY);
         }
-
         if (!SP.state.running) break;
       }
 
-      // 最终全局复查
       if (SP.state.running && await tabStillAlive(tid)) {
         U.log('\n=== 最终全局复查 ===', 'ok');
         const finalCheck = await S.sendToTab('SCAN_CATALOG', {}, 15000, tid);
@@ -229,7 +221,7 @@
               let anyProgress = false;
               for (const s of finalTodo) {
                 if (!SP.state.running) break;
-                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2, 0);
+                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2);
                 if (done) anyProgress = true;
               }
               if (!anyProgress) { U.log('补救无进展，退出', 'err'); break; }
@@ -264,7 +256,6 @@
         pauseBtn.textContent = '暂停';
         pauseBtn.classList.remove('active');
       }
-      U.setProgress(0, 0);
     }
   }
 
@@ -285,7 +276,7 @@
     const pauseBtn = U.$('pause');
 
     if (isPaused) {
-      const r = await S.sendToTab('RESUME', {}, 5000, tid);
+      const r = await S.sendToTab('RESUME', {}, 10000, tid);
       if (r.ok) {
         isPaused = false;
         U.log('已继续', 'ok');
@@ -297,7 +288,7 @@
         U.log('继续失败: ' + r.error, 'err');
       }
     } else {
-      const r = await S.sendToTab('PAUSE', {}, 5000, tid);
+      const r = await S.sendToTab('PAUSE', {}, 10000, tid);
       if (r.ok) {
         isPaused = true;
         U.log('已暂停，点"继续"恢复', 'ok');
@@ -317,7 +308,7 @@
     if (!tid) return;
     if (isPaused) return;
     const pauseBtn = U.$('pause');
-    await S.sendToTab('PAUSE', {}, 5000, tid);
+    await S.sendToTab('PAUSE', {}, 10000, tid);
     isPaused = true;
     U.log('任务已自动暂停', 'err');
     if (pauseBtn) {
