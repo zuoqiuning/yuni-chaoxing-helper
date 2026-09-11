@@ -1,4 +1,4 @@
-# 屿宁学习助手
+# 屿宁学习通助手
 
 Edge / Chrome 浏览器扩展 · Manifest V3 · MIT 协议
 
