@@ -8,6 +8,10 @@
   const dom = CXH.dom;
   const utils = CXH.utils;
 
+  // 单个视频任务内最多自动处理几次弹窗。
+  // 超星有时会连续弹两次同类型弹窗，所以要允许 >1；但必须封顶，避免无限循环。
+  const MAX_BLOCKER_AUTOCLICKS = 5;
+
   async function playWithTimeout(v, timeoutMs = 2000) {
     try {
       v.muted = true;
@@ -179,6 +183,7 @@
 
   async function playJob(videoIframe, rate, autoMute) {
     P.interrupted = false;
+    P.blockerAutoClicks = 0;   // 每个视频任务重置弹窗自动处理计数
 
     if (P.currentVideoEl && P.currentVideoEl.__cxhRateInterval) {
       clearInterval(P.currentVideoEl.__cxhRateInterval);
@@ -267,8 +272,34 @@
         }
         const blocker = core.detectBlockers();
         if (blocker) {
+          // ① 可自动处理：仅当弹窗内按钮文本命中「继续类」白名单
+          if (blocker.category === 'confirmable' && P.blockerAutoClicks < MAX_BLOCKER_AUTOCLICKS) {
+            P.blockerAutoClicks++;
+            const btnText = core.blockerButtonText(blocker);
+            const clicked = core.clickBlockerButton(blocker);
+            if (clicked) {
+              utils.log(`  [blocker] ✓ 已自动处理（${P.blockerAutoClicks}/${MAX_BLOCKER_AUTOCLICKS}）${blocker.selector} → 点击「${btnText}」`);
+              // 给平台反应时间后续播；不 finish，下一轮继续观察（连续弹窗会被再次捕获）
+              setTimeout(() => {
+                try { v.muted = true; v.play().catch(() => {}); } catch (_) {}
+              }, 600);
+              return;
+            }
+            utils.log(`  [blocker] 自动点击失败（按钮已失效），转人工`, 'err');
+          } else if (blocker.category === 'confirmable') {
+            utils.log(`  [blocker] 自动点击已达上限 ${MAX_BLOCKER_AUTOCLICKS} 次，转人工（疑似连续弹窗）`, 'err');
+          }
+
+          // ② 需人工：任务点上限 / 未知遮挡 / 点击失败 / 超上限
           try { v.pause(); } catch (_) {}
-          finish({ ok: false, error: 'blocked: ' + blocker.selector, blockerText: blocker.text });
+          const reason = blocker.category === 'need-user' ? '需人工决策' : '自动处理未成功';
+          utils.log(`  [blocker] ✗ 转人工处理（${reason}）: ${blocker.selector}`, 'err');
+          finish({
+            ok: false,
+            error: 'blocked: ' + blocker.selector,
+            blockerText: blocker.text,
+            category: blocker.category
+          });
           return;
         }
         if (v.paused && !v.ended && v.currentTime < v.duration - 1) {

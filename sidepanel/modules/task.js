@@ -82,6 +82,7 @@
       U.log(`\n[${idx + 1}/${total}] [${s.label}] ${s.name}${attempt > 1 ? ` (第 ${attempt} 次)` : ''}`);
       R.markSectionCurrent(s.id);
       SP.state.runningSectionId = s.id;
+      if (SP.runtime) SP.runtime.save();
 
       const curSectionId = await S.getCurrentSectionId(tid);
       if (curSectionId !== s.id) {
@@ -191,6 +192,7 @@
     SP.state.runningTabId = tid;
     SP.state.running = true;
     isPaused = false;
+    if (SP.runtime) SP.runtime.save();
 
     const autoMute = await Store.getAutoMute();
     const disruptLock = await Store.getDisruptLock();
@@ -199,6 +201,7 @@
     U.log(`任务绑定标签页: ${tid}`);
 
     U.setStatus(true);
+    if (SP.pending) SP.pending.clearAll();
     const startBtn = U.$('start'), stopBtn = U.$('stop'), pauseBtn = U.$('pause');
     startBtn.disabled = true;
     stopBtn.disabled = false;
@@ -311,7 +314,7 @@
         U.log('\n=== 全部完成 ===', 'ok');
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
-          title: '屿宁学习助手',
+          title: '屿宁学习通助手',
           message: '所有未完成节已跑完'
         });
       }
@@ -321,6 +324,7 @@
       if (globalRunId === myRunId) {
         SP.state.runningTabId = null;
         SP.state.runningSectionId = null;
+        if (SP.runtime) SP.runtime.clear();
         isPaused = false;
         U.setStatus(false);
         startBtn.disabled = false;
@@ -340,6 +344,7 @@
     SP.state.running = false;
     SP.state.runningSectionId = null;
     SP.state.pendingResume = null;
+    if (SP.runtime) SP.runtime.clear();
     isPaused = false;
     globalRunId++;
     U.log('发送停止信号…', 'err');

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "屿宁学习助手",
-  "version": "0.5.0",
-  "description": "屿宁学习助手 - 学习通任务点扫描、视频播放与AI答题辅助",
+  "default_locale": "zh_CN",
+  "name": "__MSG_appName__",
+  "version": "0.5.1",
+  "description": "__MSG_appDesc__",
   "homepage_url": "https://gitee.com/zuoqiuning/yuni-chaoxing-helper",
   "permissions": ["storage", "sidePanel", "tabs", "activeTab", "notifications"],
   "host_permissions": [
@@ -23,6 +24,7 @@
       ],
       "js": [
         "content/utils.js",
+        "content/selectors.js",
         "content/dom.js",
         "content/catalog.js",
         "content/jobs.js",
@@ -42,6 +44,6 @@
     }
   ],
   "action": {
-    "default_title": "屿宁学习助手"
+    "default_title": "__MSG_appName__"
   }
 }

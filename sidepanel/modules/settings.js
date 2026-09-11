@@ -11,15 +11,23 @@
     const autoMute = await Store.getAutoMute();
     const disruptLock = await Store.getDisruptLock();
     const autoCaptcha = await Store.getAutoCaptchaOCR();
+    const keyRemembered = await Store.isKeyRemembered();
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal">
-        <div class="modal-title">屿宁学习助手 · 设置</div>
+        <div class="modal-title">屿宁学习通助手 · 设置</div>
 
         <label class="modal-label">API Key</label>
         <input type="password" id="ai-key" placeholder="sk-..." value="${U.escapeHtml(cfg.apiKey)}">
+        <label class="modal-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:8px;font-weight:400;">
+          <input type="checkbox" id="ai-remember" ${keyRemembered ? 'checked' : ''} style="width:auto;">
+          <span>在本机记住 24 小时（会明文保存在本机）</span>
+        </label>
+        <div style="font-size:11px;color:#999;margin-top:4px;margin-left:22px;">
+          默认只存于内存，浏览器重启后需重新填写；勾选后才会写入本机磁盘，24 小时后自动清除。
+        </div>
 
         <label class="modal-label">Base URL</label>
         <input type="text" id="ai-base" value="${U.escapeHtml(cfg.baseUrl)}">
@@ -58,7 +66,8 @@
             <span>AI 自动识别验证码</span>
           </label>
           <div style="font-size:11px;color:#999;margin-top:4px;margin-left:22px;">
-            用 MiMo 识别图片验证码；连续失败 2 次自动切换手动输入
+            用 MiMo 识别图片验证码；连续失败 2 次自动切换手动输入。
+            <br>识别时会截取当前窗口画面并上传至第三方大模型，请先收起敏感窗口。
           </div>
         </div>
 
@@ -96,6 +105,7 @@
       const baseUrl = overlay.querySelector('#ai-base').value.trim() || Store.AI_CONFIG_DEFAULT.baseUrl;
       const model = overlay.querySelector('#ai-model').value;
       const thinkingType = overlay.querySelector('#ai-thinking').value;
+      const rememberOn = overlay.querySelector('#ai-remember').checked;
       const autoOn = overlay.querySelector('#auto-answer').checked;
       const autoMuteOn = overlay.querySelector('#auto-mute').checked;
       const lockOn = overlay.querySelector('#disrupt-lock').checked;
@@ -116,7 +126,7 @@
       const result = await AI.verifyConfig(apiKey, baseUrl, model);
 
       if (result.ok) {
-        await Store.saveAIConfig({ apiKey, baseUrl, model, thinkingType });
+        await Store.saveAIConfig({ apiKey, baseUrl, model, thinkingType }, { remember: rememberOn });
         await Store.setAutoAnswer(autoOn);
         await Store.setAutoMute(autoMuteOn);
         await Store.setDisruptLock(lockOn);
@@ -128,7 +138,7 @@
 
         statusEl.className = 'ai-status ok';
         statusEl.textContent = `✓ 验证通过（${model}）`;
-        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}, 防打扰锁: ${lockOn ? '开' : '关'}, AI验证码: ${captchaOn ? '开' : '关'}）`, 'ok');
+        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}, 防打扰锁: ${lockOn ? '开' : '关'}, AI验证码: ${captchaOn ? '开' : '关'}, 密钥记住: ${rememberOn ? '24小时' : '仅本次运行'}）`, 'ok');
         if (SP.status && SP.status.refreshAiBanner) SP.status.refreshAiBanner();
         setTimeout(close, 1200);
       } else {

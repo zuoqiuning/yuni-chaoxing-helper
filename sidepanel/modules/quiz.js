@@ -38,6 +38,7 @@
     }
 
     SP.state.quizQuestions = res.questions || [];
+    SP.state.fillResults = [];   // 题目重扫 → 上一次的填入结果作废
     if (SP.state.quizQuestions.length > 0) {
       U.log(`发现 ${SP.state.quizQuestions.length} 道题目`);
     }
@@ -80,6 +81,7 @@
 
     const res = await S.sendToTab('FILL_QUIZ', { answers }, 30000);
     if (res.ok) {
+      SP.state.fillResults = res.details || [];
       U.log(`已填入 ${res.filled}/${res.total} 道题目`, res.filled > 0 ? 'ok' : 'err');
       return res;
     } else {
@@ -117,7 +119,15 @@
       if (filled && filled.ok) {
         U.log(`✓ 一键答题完成：${filled.filled}/${filled.total}`, 'ok');
         if (filled.filled < filled.total) {
-          U.log(`  ⚠ ${filled.total - filled.filled} 道题未成功填入，请手动检查`, 'err');
+          const bad = (filled.details || []).filter(d => !d.ok).map(d => `第${d.index + 1}题`);
+          U.log(`  ⚠ ${filled.total - filled.filled} 道题未通过回读校验${bad.length ? '：' + bad.join('、') : ''}`, 'err');
+          if (SP.pending) {
+            SP.pending.set('quiz',
+              `有 ${filled.total - filled.filled} 道题未能自动填对${bad.length ? '（' + bad.join('、') + '）' : ''}：请点「查看题目」核对后手动修正`,
+              'warn');
+          }
+        } else if (SP.pending) {
+          SP.pending.clear('quiz');
         }
       }
     } catch (e) {
@@ -142,6 +152,8 @@
     const answers = SP.state.pendingAnswers || [];
     const answerMap = {};
     answers.forEach(a => { answerMap[a.index] = a; });
+    const resultMap = {};
+    (SP.state.fillResults || []).forEach(r => { resultMap[r.index] = r; });
 
     const typeLabelMap = {
       single: '单选', multiple: '多选', judge: '判断',
@@ -164,6 +176,15 @@
         answerHtml = `<span class="qdi-answer empty">（未答）</span>`;
       }
 
+      // 页面实际选中（回读结果）：用来核对「AI 说的」和「真正点上的」是否一致
+      const rs = resultMap[q.index];
+      let actualHtml = '';
+      if (rs) {
+        const got = (rs.actual && rs.actual.length) ? rs.actual.join('') : '（无）';
+        const exp = (rs.expected && rs.expected.length) ? rs.expected.join('') : '—';
+        actualHtml = `<span class="qdi-actual ${rs.ok ? 'ok' : 'bad'}" title="期望 ${U.escapeHtml(exp)}">实际 ${U.escapeHtml(got)}</span>`;
+      }
+
       const optionsHtml = (q.options && q.options.length)
         ? `<div class="qdi-options">
              ${q.options.map(o => `<div class="qdi-opt">${U.escapeHtml(o.letter)}. ${U.escapeHtml(o.text)}</div>`).join('')}
@@ -176,6 +197,7 @@
             <span class="qdi-num">${i + 1}</span>
             <span class="qdi-type">${U.escapeHtml(typeLabel)}</span>
             ${answerHtml}
+            ${actualHtml}
           </div>
           <div class="qdi-stem">${U.escapeHtml(q.stem || '(无题干)')}</div>
           ${optionsHtml}

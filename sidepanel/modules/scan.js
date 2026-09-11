@@ -102,7 +102,7 @@
       const jobList = jobRes.jobs || [];
 
       if (jobList.length === 0) {
-        R.renderCardJobs([]);
+        R.renderCardJobs([], sectionId);
       } else {
         const grouped = {};
         jobList.forEach(j => {
@@ -119,7 +119,7 @@
             playing: false
           });
         });
-        R.renderCardJobs(Object.values(grouped));
+        R.renderCardJobs(Object.values(grouped), sectionId);
 
         SP.state.currentJobs = [];
         jobList.forEach(j => {
@@ -159,7 +159,7 @@
     const catRes = await sendToTab('SCAN_CATALOG', {}, 10000, tabId);
     if (catRes.ok) R.renderCatalog(catRes.catalog || [], sectionId);
     const jobRes = await sendToTab('SCAN_SECTION', { currentOnly: true }, 60000, tabId);
-    if (jobRes.ok) R.renderJobs(jobRes.jobs || []);
+    if (jobRes.ok) R.renderJobs(jobRes.jobs || [], sectionId);
     else return { ok: false, error: jobRes.error };
     return { ok: true, sectionId };
   }

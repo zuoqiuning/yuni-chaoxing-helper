@@ -124,8 +124,14 @@
       } else if (endRes.error === 'stopped') {
         utils.log(`  ⏹ 已停止`, 'err');
       } else if (endRes.error?.startsWith('blocked')) {
-        utils.log(`  ⚠ 弹窗阻挡`, 'err');
-        utils.sendMsg({ type: 'BLOCKED', jobId: job.jobId, text: endRes.blockerText || endRes.error });
+        const reason = endRes.category === 'need-user' ? '需人工决策（如任务点上限）' : '自动处理未成功';
+        utils.log(`  ⚠ 弹窗阻挡，需人工介入：${reason}`, 'err');
+        utils.sendMsg({
+          type: 'BLOCKED',
+          jobId: job.jobId,
+          text: endRes.blockerText || endRes.error,
+          category: endRes.category || ''
+        });
       } else {
         utils.log(`  ✗ 未完成: ${endRes.error}`, 'err');
       }

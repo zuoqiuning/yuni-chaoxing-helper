@@ -129,10 +129,12 @@
     if (statEl) statEl.textContent = '';
   }
 
-  function renderCardJobs(cards) {
+  function renderCardJobs(cards, sectionId) {
     const el = U.$('jobs');
     if (!el) return;
 
+    // ★ 先落库 sectionId，否则 localDoneJobs 的 key 会落到兜底的 'default'
+    if (sectionId) SP.state.jobCardsSectionId = sectionId;
     SP.state.jobCards = cards || [];
 
     if (!cards || cards.length === 0) {
@@ -143,13 +145,13 @@
     }
 
     const sorted = [...cards].sort((a, b) => a.cardIndex - b.cardIndex);
-    const sectionId = SP.state.jobCardsSectionId;
+    const sid = SP.state.jobCardsSectionId;
 
     let totalJobs = 0, undoneJobs = 0;
     sorted.forEach(card => {
       const cJobs = card.jobs || [];
       totalJobs += cJobs.length;
-      undoneJobs += cJobs.filter(j => !isAuthoritativeDone(sectionId, card.cardIndex, j)).length;
+      undoneJobs += cJobs.filter(j => !isAuthoritativeDone(sid, card.cardIndex, j)).length;
     });
 
     el.innerHTML = sorted.map(c => renderOneCardHtml(c)).join('');
@@ -220,9 +222,9 @@
     }
   }
 
-  function renderJobs(jobs) {
+  function renderJobs(jobs, sectionId) {
     if (!jobs || jobs.length === 0) {
-      renderCardJobs([]);
+      renderCardJobs([], sectionId);
       return;
     }
     const grouped = {};
@@ -231,7 +233,7 @@
       if (!grouped[ci]) grouped[ci] = { cardIndex: ci, cardText: j.cardText || '', jobs: [] };
       grouped[ci].jobs.push(j);
     });
-    renderCardJobs(Object.values(grouped));
+    renderCardJobs(Object.values(grouped), sectionId);
   }
 
   function markJobPlaying(cardIndex, jobIndex, jobId) {

@@ -19,7 +19,11 @@
     playingJobId: null,
     localDoneJobs: {},
     // ★★★ 新增：验证码通过后等待页面刷新恢复
-    pendingResume: null
+    pendingResume: null,
+    // ★ 答题逐题回读结果：[{ index, ok, via, reason, expected, actual }]
+    fillResults: [],
+    // ★ 待处理事件：kind -> { text, level }
+    pending: {}
   };
 
   SP.utils = {
@@ -64,8 +68,41 @@
       dot.title = run ? '运行中' : '空闲';
     },
 
-    setProgress() { /* no-op */ },
-
     sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  };
+
+  // ============================================================
+  // 运行态持久化（chrome.storage.session，内存态，扩展重载即清空）
+  // 目的：侧边栏被误关 / 浏览器崩溃后，仍能知道上次跑到哪一节；
+  //       尤其是「验证码通过 → 刷新页面」期间面板被关掉时，
+  //       pendingResume 不再随内存一起丢失。
+  // 注意：不做自动接管，只恢复状态并提示，避免双流程并发。
+  // ============================================================
+  const RUNTIME_KEY = '__sp_runtime';
+
+  SP.runtime = {
+    async save() {
+      try {
+        await chrome.storage.session.set({
+          [RUNTIME_KEY]: {
+            runningTabId: SP.state.runningTabId || null,
+            runningSectionId: SP.state.runningSectionId || null,
+            pendingResume: SP.state.pendingResume || null,
+            updatedAt: Date.now()
+          }
+        });
+      } catch (_) {}
+    },
+
+    async load() {
+      try {
+        const r = await chrome.storage.session.get(RUNTIME_KEY);
+        return r[RUNTIME_KEY] || null;
+      } catch (_) { return null; }
+    },
+
+    async clear() {
+      try { await chrome.storage.session.remove(RUNTIME_KEY); } catch (_) {}
+    }
   };
 })();

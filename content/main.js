@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   const CXH = window.__CXH;
+  const SEL = CXH.SEL;
   if (!CXH) { console.error('[CXH] modules not loaded'); return; }
   if (window.__CXH_MAIN_LOADED) return;
   window.__CXH_MAIN_LOADED = true;
@@ -8,19 +9,19 @@
   console.log('[CXH] main loaded at', location.href);
 
   function getCurrentSectionId() {
-    const inp = document.getElementById('curChapterId');
+    const inp = document.getElementById(SEL.curChapterIdInput);
     if (inp && inp.value) return inp.value;
     try { return new URL(location.href).searchParams.get('chapterId'); }
     catch (_) { return null; }
   }
   function getIframeKnowledgeId() {
-    const ifr = document.getElementById('iframe');
+    const ifr = document.getElementById(SEL.cardsIframeId);
     if (!ifr || !ifr.src) return null;
     try { const m = ifr.src.match(/knowledgeid=(\d+)/); return m ? m[1] : null; }
     catch (_) { return null; }
   }
   function findCatalogNode(sectionId) {
-    return document.querySelector(`.posCatalog_select[id="cur${sectionId}"]`);
+    return document.querySelector(SEL.catalogNodeById(sectionId));
   }
   function waitFor(cond, timeoutMs) {
     return new Promise(resolve => {
@@ -56,8 +57,8 @@
       return { ok: true, method: 'reload-no-node' };
     }
     const targets = [
-      node, node.querySelector('.posCatalog_name'),
-      node.querySelector('.posCatalog_title'), node.querySelector('.posCatalog_sbar')
+      node, node.querySelector(SEL.catalogName),
+      node.querySelector(SEL.catalogTitle), node.querySelector(SEL.catalogLabel)
     ].filter(Boolean);
 
     window.__cxhInternalClick = true;
@@ -91,7 +92,7 @@
       return CXH.quiz.isQuizPage();
     }
     if (/\/work\/dowork/.test(location.href)) return true;
-    if (document.querySelector('.singleQuesId, .stem_answer, .questionLi')) return true;
+    if (document.querySelector(SEL.quizRootForCount)) return true;
     return false;
   }
 
@@ -100,7 +101,7 @@
     const walk = (rootDoc, rootWin, depth) => {
       if (depth > 4) return;
       let iframes = [];
-      try { iframes = rootDoc.querySelectorAll('iframe'); } catch (_) { return; }
+      try { iframes = rootDoc.querySelectorAll(SEL.iframe); } catch (_) { return; }
       for (const ifr of iframes) {
         try {
           const d = ifr.contentDocument;
@@ -157,7 +158,7 @@
 
     for (const f of frames) {
       try {
-        const layuiClose = f.doc.querySelectorAll('.layui-layer-close, .layui-layer-close1, .layui-layer-btn-close');
+        const layuiClose = f.doc.querySelectorAll(SEL.zoomCloseButtons.join(','));
         for (const el of layuiClose) {
           if (el.offsetParent === null) continue;
           try { el.click(); closed++; } catch (_) {}
@@ -170,58 +171,31 @@
   }
 
   function checkCaptchaExists() {
-    const input = queryInAllFrames([
-      'input#ucode', 'input[name="ucode"]', 'input[name="verifyCode"]',
-      'input[name="code"]', 'input[placeholder*="验证码"]',
-      'input[placeholder*="字符"]'
-    ], { excludeIds: ['searchChapterListByName'] });
+    const input = queryInAllFrames(SEL.captchaInputStrict, {
+      excludeIds: [SEL.searchInputId]
+    });
     if (input) return { exists: true, type: 'input' };
 
     const frames = getAllFrames();
     for (const f of frames) {
       try {
         const text = (f.doc.body && f.doc.body.textContent) || '';
-        if (/9010|操作异常|请输入图片中的验证码/.test(text.slice(0, 3000))) {
+        if (SEL.RE.captchaText.test(text.slice(0, 3000))) {
           return { exists: true, type: 'text' };
         }
       } catch (_) {}
     }
 
-    const submitBtn = queryInAllFrames(['input.submit', 'button.submit']);
+    const submitBtn = queryInAllFrames(SEL.captchaSubmitBtn);
     if (submitBtn) return { exists: true, type: 'submit-btn' };
 
     return { exists: false };
   }
 
-  function getCaptchaInfo() {
-    const imgSelectors = [
-      'img#verifyImg', 'img#ucode_img', 'img#captchaImg',
-      'img[src*="verify"]', 'img[src*="validate"]',
-      'img[src*="captcha"]', 'img[src*="antispider"]',
-      'form img', '.verify img', '.captcha img'
-    ];
-    const found = queryInAllFrames(imgSelectors);
-    if (found) {
-      const src = found.el.src || '';
-      if (src.startsWith('data:image')) return { dataUrl: src, source: 'img-dataurl' };
-      if (src) return { url: src, source: 'img-url' };
-    }
-    return null;
-  }
-
   function fillCaptcha(code) {
-    const inputSelectors = [
-      'input#ucode',
-      'input[name="ucode"]',
-      'input[name="verifyCode"]',
-      'input[name="code"]',
-      'input[placeholder*="验证码"]',
-      'input[placeholder*="字符"]',
-      'input[placeholder*="请输"]',
-      'input[type="text"]'
-    ];
+    const inputSelectors = SEL.captchaInputWide;
     const found = queryInAllFrames(inputSelectors, {
-      excludeIds: ['searchChapterListByName', 'searchChapter', 'chapterSearch']
+      excludeIds: SEL.captchaExcludeIds
     });
     if (!found) return { ok: false, error: 'input not found (all frames)' };
 
@@ -294,10 +268,7 @@
     }
 
     if (!submitted) {
-      const btnSelectors = [
-        'input.submit', 'button.submit', '.submit',
-        'button[type="submit"]', 'input[type="submit"]'
-      ];
+      const btnSelectors = SEL.captchaSubmitBtnWide;
       for (const sel of btnSelectors) {
         try {
           const btns = doc.querySelectorAll(sel);
@@ -331,7 +302,7 @@
     if (!isQuizPage()) return;
     await new Promise(r => setTimeout(r, 2500));
     if (!isQuizPage()) return;
-    const count = document.querySelectorAll('.singleQuesId, .stem_answer, .questionLi').length;
+    const count = document.querySelectorAll(SEL.quizRootForCount).length;
     try { chrome.runtime.sendMessage({ type: 'QUIZ_PAGE_DETECTED', count, url: location.href }); } catch (_) {}
   }
   setTimeout(checkAndNotifyQuiz, 500);
@@ -384,12 +355,6 @@
           return { ok: true };
         }
         return { ok: false, error: 'invalid sectionId' };
-      }
-
-      case 'GET_CAPTCHA': {
-        const info = getCaptchaInfo();
-        if (!info) return { ok: false, error: 'no captcha found' };
-        return { ok: true, ...info };
       }
 
       case 'CHECK_CAPTCHA_EXISTS':
@@ -475,6 +440,7 @@
         const questions = CXH.quiz.extractQuestions();
         const answers = payload?.answers || [];
         let filled = 0, failed = 0;
+        const details = [];   // 逐题结果，供面板做复核展示
         console.log(`[CXH] FILL_QUIZ: 收到 ${answers.length} 个答案，页面 ${questions.length} 道题`);
 
         for (const ans of answers) {
@@ -485,19 +451,31 @@
           if (!q) {
             console.warn(`[CXH] 找不到题目 index=${idx}`);
             failed++;
+            details.push({ index: idx, ok: false, reason: 'question-not-found' });
             continue;
           }
           try {
-            const ok = await CXH.quiz.fillAnswerAsync(q, ans.answer);
-            if (ok) filled++;
-            else { console.warn(`[CXH] 填入失败: index=${idx}`); failed++; }
+            const r = await CXH.quiz.fillAnswerAsync(q, ans.answer);
+            if (r && r.ok) {
+              filled++;
+              details.push({ index: idx, ok: true, via: r.via, expected: r.expected || [], actual: r.actual || [] });
+            } else {
+              const why = (r && (r.via || r.reason)) || 'unknown';
+              console.warn(`[CXH] 第${idx + 1}题 未通过回读校验: ${why}`);
+              failed++;
+              details.push({
+                index: idx, ok: false, via: r && r.via, reason: r && r.reason,
+                expected: (r && r.expected) || [], actual: (r && r.actual) || []
+              });
+            }
           } catch (e) {
             console.warn(`[CXH] 异常 index=${idx}:`, e);
             failed++;
+            details.push({ index: idx, ok: false, reason: 'exception' });
           }
         }
         console.log(`[CXH] FILL_QUIZ 结束: filled=${filled} failed=${failed}`);
-        return { ok: true, filled, failed, total: questions.length };
+        return { ok: true, filled, failed, total: questions.length, details };
       }
 
       default:

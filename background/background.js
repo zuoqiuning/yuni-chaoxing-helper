@@ -78,7 +78,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.notifications.create({
         type: 'basic',
         iconUrl: ICON_DATA_URI,
-        title: msg.title || '屿宁学习助手',
+        title: msg.title || '屿宁学习通助手',
         message: msg.message || ''
       }, () => {
         if (chrome.runtime.lastError) {

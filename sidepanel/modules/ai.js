@@ -219,7 +219,13 @@
 
     const brutal = cleaned.match(/[A-Za-z]{4}/g);
     if (brutal && brutal.length > 0) {
-      const valid = brutal.filter(t => !NOISE.has(t.toUpperCase()));
+      const noiseList = Array.from(NOISE);
+      const valid = brutal.filter(t => {
+        const up = t.toUpperCase();
+        if (NOISE.has(up)) return false;
+        // 防止把噪声词切出 4 字母前缀：如 "IMAGE PNG JPG" 会被切出 "IMAG"
+        return !noiseList.some(n => n.includes(up));
+      });
       if (valid.length > 0) {
         const mixed = valid.find(t => /[a-z]/.test(t) && /[A-Z]/.test(t));
         return mixed || valid[0];
@@ -290,6 +296,7 @@
 
   SP.ai = {
     verifyConfig, askQuiz, buildPrompt, parseAnswers,
-    recognizeCaptchaFromScreenshot
+    recognizeCaptchaFromScreenshot,
+    extractCaptchaCode   // 纯函数，导出以便离线测试（test/pure-functions.test.js）
   };
 })();

@@ -14,6 +14,12 @@
   let lastTabUpdatedTime = 0;
   const TAB_UPDATE_THROTTLE = 2500;
 
+  // 验证码通过的统一回调：清掉待处理区提示
+  const captchaPassed = () => {
+    if (SP.pending) SP.pending.clear('captcha');
+    U.log('验证码已通过', 'ok');
+  };
+
   function resetPanel() {
     SP.state.catalogCache = [];
     SP.state.currentJobs = [];
@@ -38,6 +44,7 @@
     if ($('quiz-ready')) $('quiz-ready').style.display = 'none';
     if ($('quiz-stat')) $('quiz-stat').textContent = '';
     if (Captcha) Captcha.hideState();
+    if (SP.pending) SP.pending.clearAll();
   }
 
   function resetButtons() {
@@ -160,10 +167,11 @@
 
       if (alertType === 'LOGIN_EXPIRED') {
         U.log(`⚠ 检测到登录过期，任务已暂停`, 'err');
+        if (SP.pending) SP.pending.set('login', '登录已过期：请重新登录，然后点「继续」', 'err');
         await Task.pauseByAlert();
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
-          title: '屿宁学习助手 - 需要处理',
+          title: '屿宁学习通助手 - 需要处理',
           message: '登录已过期，请重新登录后点"继续"'
         });
         return;
@@ -172,13 +180,14 @@
       if (alertType === 'CAPTCHA_PAGE' || alertType === 'CAPTCHA') {
         U.log(`⚠ 检测到验证码，任务已暂停`, 'err');
         if (detail) U.log(`  详情: ${detail}`, 'err');
+        if (SP.pending) SP.pending.set('captcha', '检测到验证码：正在自动识别，失败会提示手动输入', 'warn');
 
         await Task.pauseByAlert();
 
         if (Captcha && Captcha.tryAutoRecognize) {
           Captcha.resetAttempts();
           Captcha.tryAutoRecognize({
-            onSuccess: () => U.log('验证码已通过', 'ok')
+            onSuccess: captchaPassed
           }).catch(e => {
             U.log('自动识别异常: ' + e.message, 'err');
           });
@@ -186,7 +195,7 @@
 
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
-          title: '屿宁学习助手 - 需要处理',
+          title: '屿宁学习通助手 - 需要处理',
           message: '检测到验证码，正在自动识别'
         });
         return;
@@ -195,8 +204,10 @@
     }
 
     const isBizMsg = ['LOG', 'JOB_DONE', 'JOB_PLAYING', 'SECTION_DONE', 'BLOCKED', 'QUIZ_PAGE_DETECTED', 'CARD_JOBS', 'CARD_JOBS_UPDATE', 'CARD_ACTIVE', 'CARD_JOBS_RESET'].includes(msg.type);
-    if (isBizMsg && sender && sender.tab && SP.state.runningTabId) {
-      if (sender.tab.id !== SP.state.runningTabId) return;
+    if (isBizMsg && sender && sender.tab) {
+      // 运行中按 runningTabId 过滤；空闲时退回 boundTabId，避免多标签页日志串台
+      const filterTabId = SP.state.runningTabId || SP.state.boundTabId;
+      if (filterTabId && sender.tab.id !== filterTabId) return;
     }
 
     if (msg.type === 'LOG') U.log(msg.text, msg.level || '');
@@ -216,7 +227,7 @@
 
     if (msg.type === 'CARD_JOBS') {
       if (msg.cards && msg.cards.length > 0) {
-        R.renderCardJobs(msg.cards);
+        R.renderCardJobs(msg.cards, msg.sectionId);
       }
       return;
     }
@@ -234,13 +245,20 @@
     }
 
     if (msg.type === 'SECTION_DONE') {
+      if (SP.pending) SP.pending.clear('blocker');
       if (!SP.state.running) setTimeout(() => S.doScan(true, true), 800);
     }
     if (msg.type === 'BLOCKED') {
       U.log(`⚠ 弹窗阻挡，请手动处理: ${msg.text}`, 'err');
+      if (SP.pending) {
+        const reason = msg.category === 'need-user'
+          ? '页面弹窗需要你决策（如任务点已达上限）'
+          : '弹窗无法自动处理';
+        SP.pending.set('blocker', `${reason}：请到课程页处理后点「继续」`, 'err');
+      }
       chrome.runtime.sendMessage({
         type: 'NOTIFY',
-        title: '屿宁学习助手 - 需要处理',
+        title: '屿宁学习通助手 - 需要处理',
         message: '视频被弹窗阻挡，请查看页面'
       });
     }
@@ -253,6 +271,7 @@
         if (age < 60000) {
           // ★★★ 关键：先清 pendingResume 防止重复触发
           SP.state.pendingResume = null;
+          if (SP.runtime) SP.runtime.save();
 
           console.log('[SP] ==================== 验证码恢复流程开始 ====================');
 
@@ -297,7 +316,7 @@
           if (Captcha && Captcha.tryAutoRecognize) {
             Captcha.resetAttempts();
             Captcha.tryAutoRecognize({
-              onSuccess: () => U.log('验证码已通过', 'ok')
+              onSuccess: captchaPassed
             }).catch(() => {});
           }
           return;
@@ -337,6 +356,27 @@
     U.setStatus(false);
     resetButtons();
 
+    // 恢复上次运行态：重点是「验证码通过 → 刷新页面」期间面板被关掉的情况
+    try {
+      const rt = SP.runtime ? await SP.runtime.load() : null;
+      if (rt) {
+        const pr = rt.pendingResume;
+        if (pr && pr.tabId && (Date.now() - (pr.ts || 0)) < 60000) {
+          // pendingResume 仍在有效期内 → 交给既有的 TAB_UPDATED 恢复链路处理
+          SP.state.pendingResume = pr;
+          U.log('检测到验证码刷新后的续跑请求，等待页面加载完成…', 'ok');
+          if (SP.pending) SP.pending.set('resume', '验证码已通过：页面刷新后将自动从断点继续', 'warn');
+        } else if (rt.runningTabId && (Date.now() - (rt.updatedAt || 0)) < 10 * 60 * 1000) {
+          U.log(`上次任务未正常结束（标签页 ${rt.runningTabId}，节 ${rt.runningSectionId || '-'}）`, 'warn');
+          if (SP.pending) {
+            SP.pending.set('resume', '检测到上次任务未正常结束：点「开始刷课」可继续，已完成的节不会重跑', 'warn');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[SP] 恢复运行态失败:', e);
+    }
+
     try {
       const tab = await S.getActiveTab();
       if (tab && tab.url && tab.url.includes('chaoxing.com')) {
@@ -359,7 +399,7 @@
       if (Captcha.tryAutoRecognize) {
         Captcha.resetAttempts();
         Captcha.tryAutoRecognize({
-          onSuccess: () => U.log('验证码已通过', 'ok')
+          onSuccess: captchaPassed
         }).catch(() => {});
       }
       return;
@@ -382,7 +422,7 @@
         if (Captcha.tryAutoRecognize) {
           Captcha.resetAttempts();
           Captcha.tryAutoRecognize({
-            onSuccess: () => U.log('验证码已通过', 'ok')
+            onSuccess: captchaPassed
           }).catch(() => {});
         }
       });

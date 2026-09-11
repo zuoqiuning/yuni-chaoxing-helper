@@ -179,6 +179,8 @@
       sectionId: SP.state.runningSectionId,
       ts: Date.now()
     };
+    // 立刻落盘：万一在页面刷新期间面板被关掉，重开后仍能续跑
+    if (SP.runtime) SP.runtime.save();
     console.log('[Captcha] 已设置 pendingResume:', SP.state.pendingResume);
 
     // 3. 显示状态

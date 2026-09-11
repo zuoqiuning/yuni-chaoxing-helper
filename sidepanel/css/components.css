@@ -602,3 +602,62 @@
 #captcha-submit {
   flex: 0 0 auto;
 }
+
+/* ================== PENDING（待处理事件常驻区） ================== */
+.pending-area {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+}
+.pending-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  line-height: 1.45;
+  border: 1px solid transparent;
+}
+.pending-item.warn {
+  background: var(--warning-bg);
+  border-color: #ffe0b2;
+  color: var(--warning-dark);
+}
+.pending-item.err {
+  background: var(--danger-bg);
+  border-color: #ffcdd2;
+  color: var(--danger-dark);
+}
+.pending-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pending-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* ================== QUIZ 复核（AI 答案 vs 页面实际选中） ================== */
+.qdi-actual {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.qdi-actual.ok {
+  background: var(--success-bg);
+  color: var(--success-dark);
+}
+.qdi-actual.bad {
+  background: var(--danger-bg);
+  color: var(--danger-dark);
+}
