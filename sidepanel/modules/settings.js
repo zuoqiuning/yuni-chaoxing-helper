@@ -10,6 +10,7 @@
     const autoAnswer = await Store.getAutoAnswer();
     const autoMute = await Store.getAutoMute();
     const disruptLock = await Store.getDisruptLock();
+    const autoCaptcha = await Store.getAutoCaptchaOCR();
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -51,8 +52,13 @@
             <input type="checkbox" id="disrupt-lock" ${disruptLock ? 'checked' : ''} style="width:auto;">
             <span>防打扰锁（任务运行时禁止切换章节）</span>
           </label>
+
+          <label class="modal-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px;">
+            <input type="checkbox" id="auto-captcha" ${autoCaptcha ? 'checked' : ''} style="width:auto;">
+            <span>AI 自动识别验证码</span>
+          </label>
           <div style="font-size:11px;color:#999;margin-top:4px;margin-left:22px;">
-            防止误点其他章节打断任务
+            用 MiMo 识别图片验证码；连续失败 2 次自动切换手动输入
           </div>
         </div>
 
@@ -93,6 +99,7 @@
       const autoOn = overlay.querySelector('#auto-answer').checked;
       const autoMuteOn = overlay.querySelector('#auto-mute').checked;
       const lockOn = overlay.querySelector('#disrupt-lock').checked;
+      const captchaOn = overlay.querySelector('#auto-captcha').checked;
 
       if (!apiKey) {
         statusEl.className = 'ai-status err';
@@ -113,15 +120,15 @@
         await Store.setAutoAnswer(autoOn);
         await Store.setAutoMute(autoMuteOn);
         await Store.setDisruptLock(lockOn);
+        await Store.setAutoCaptchaOCR(captchaOn);
 
-        // ★ 立即同步锁状态到 content
         if (SP.state.runningTabId) {
           SP.scan.sendToTab('SET_LOCK', { enabled: lockOn }, 3000, SP.state.runningTabId).catch(() => {});
         }
 
         statusEl.className = 'ai-status ok';
         statusEl.textContent = `✓ 验证通过（${model}）`;
-        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}, 防打扰锁: ${lockOn ? '开' : '关'}）`, 'ok');
+        U.log(`配置已保存（模型: ${model}, 自动答题: ${autoOn ? '开' : '关'}, 自动静音: ${autoMuteOn ? '开' : '关'}, 防打扰锁: ${lockOn ? '开' : '关'}, AI验证码: ${captchaOn ? '开' : '关'}）`, 'ok');
         if (SP.status && SP.status.refreshAiBanner) SP.status.refreshAiBanner();
         setTimeout(close, 1200);
       } else {

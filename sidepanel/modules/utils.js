@@ -17,8 +17,9 @@
     playingCardIdx: null,
     playingJobIdx: null,
     playingJobId: null,
-    // ★★★ localDoneJobs 不再被 reset 清空，key 带 sectionId 前缀
-    localDoneJobs: {}
+    localDoneJobs: {},
+    // ★★★ 新增：验证码通过后等待页面刷新恢复
+    pendingResume: null
   };
 
   SP.utils = {

@@ -5,8 +5,11 @@
   const S = SP.scan;
   const R = SP.render;
   const Store = SP.storage;
+  const Captcha = SP.captcha;
 
   let isPaused = false;
+
+  let globalRunId = 0;
 
   function getCourseIdFromUrl(url) {
     try { return new URL(url).searchParams.get('courseId'); }
@@ -49,22 +52,31 @@
     return true;
   }
 
-  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY) {
+  async function processOneSection(s, idx, total, tid, autoMute, MAX_SECTION_RETRY, myRunId) {
     let attempt = 0;
     let sectionDone = false;
 
     while (attempt < MAX_SECTION_RETRY && !sectionDone) {
+      if (globalRunId !== myRunId) {
+        U.log(`  [task] runId 变化 (${myRunId} → ${globalRunId})，退出`);
+        return false;
+      }
+      if (SP.state.pendingResume) {
+        U.log(`  [task] 检测到 pendingResume，退出当前节处理`);
+        return false;
+      }
       if (!SP.state.running) break;
       if (!await tabStillAlive(tid)) break;
 
       attempt++;
 
-      // ★ 重试时清空 content 侧进度
-      if (attempt > 1) {
+      if (attempt > 1 && !SP.state.pendingResume) {
         U.log(`  清空本节进度记录（第 ${attempt} 次重试）`);
         try {
           await S.sendToTab('CLEAR_SECTION_PROGRESS', { sectionId: s.id }, 3000, tid);
         } catch (_) {}
+      } else if (attempt > 1 && SP.state.pendingResume) {
+        U.log(`  检测到 pendingResume，跳过清空进度`);
       }
 
       U.log(`\n[${idx + 1}/${total}] [${s.label}] ${s.name}${attempt > 1 ? ` (第 ${attempt} 次)` : ''}`);
@@ -81,6 +93,11 @@
       if (!ready) { await U.sleep(2000); continue; }
 
       const trustDone = attempt === 1;
+
+      if (globalRunId !== myRunId || SP.state.pendingResume) {
+        U.log(`  [task] PLAY_SECTION 前检测到变化，退出`);
+        return false;
+      }
 
       const res = await S.sendToTab('PLAY_SECTION', {
         rate: 2, maxRetry: 3, autoMute,
@@ -123,18 +140,56 @@
     return false;
   }
 
-  async function startAll() {
-    if (SP.state.running) { U.log('已有任务正在运行，请先停止', 'err'); return; }
+  async function startAll(opts = {}) {
+    const force = opts.force === true;
+    const skipClearProgress = opts.skipClearProgress === true;
+
+    // ★★★ 关键修复：进入 startAll 时清空验证码卡片（不管什么场景）
+    if (Captcha && Captcha.hideState) {
+      try { Captcha.hideState(); } catch (_) {}
+    }
+
+    if (SP.state.running && !force) {
+      U.log('已有任务正在运行，请先停止', 'err');
+      return;
+    }
+
+    globalRunId++;
+    const myRunId = globalRunId;
+    console.log(`[Task] startAll runId=${myRunId}, force=${force}, skipClearProgress=${skipClearProgress}`);
+
+    if (force) {
+      SP.state.running = false;
+      SP.state.runningTabId = null;
+      SP.state.runningSectionId = null;
+      await U.sleep(500);
+    }
 
     const tab = await S.getActiveTab();
     if (!tab || !tab.url || !tab.url.includes('chaoxing.com')) {
       U.log('请先打开学习通课程页', 'err'); return;
     }
+
+    if (Captcha && Captcha.isCaptchaUrl && Captcha.isCaptchaUrl(tab.url)) {
+      U.log('检测到验证码页面，正在处理…', 'err');
+      Captcha.resetAttempts();
+      Captcha.tryAutoRecognize({
+        onSuccess: () => {
+          U.log('验证码已通过', 'ok');
+        }
+      });
+      return;
+    }
+
     const courseId = getCourseIdFromUrl(tab.url);
-    if (!courseId) { U.log('无法解析 courseId', 'err'); return; }
+    if (!courseId) {
+      U.log('无法解析 courseId，请确认已进入课程页', 'err');
+      return;
+    }
 
     const tid = tab.id;
     SP.state.runningTabId = tid;
+    SP.state.running = true;
     isPaused = false;
 
     const autoMute = await Store.getAutoMute();
@@ -162,20 +217,27 @@
       U.log('=== 开始执行 ===', 'ok');
       await S.sendToTab('STOP', {}, 5000, tid);
 
-      // ★★★ 关键修复：先拉取目录，清空所有待处理节的 sessionStorage 进度
-      U.log('清理历史进度…');
-      const initCat = await S.sendToTab('SCAN_CATALOG', {}, 15000, tid);
-      if (initCat.ok && initCat.catalog) {
-        const toClear = initCat.catalog.filter(i => !i.finished);
-        for (const sec of toClear) {
-          try {
-            await S.sendToTab('CLEAR_SECTION_PROGRESS', { sectionId: sec.id }, 2000, tid);
-          } catch (_) {}
+      if (!skipClearProgress) {
+        U.log('清理历史进度…');
+        const initCat = await S.sendToTab('SCAN_CATALOG', {}, 15000, tid);
+        if (initCat.ok && initCat.catalog) {
+          const toClear = initCat.catalog.filter(i => !i.finished);
+          for (const sec of toClear) {
+            try {
+              await S.sendToTab('CLEAR_SECTION_PROGRESS', { sectionId: sec.id }, 2000, tid);
+            } catch (_) {}
+          }
+          U.log(`  已清空 ${toClear.length} 个待处理节的进度`, 'ok');
         }
-        U.log(`  已清空 ${toClear.length} 个待处理节的进度`, 'ok');
+      } else {
+        U.log('保留历史进度（验证码刷新恢复）', 'ok');
       }
 
       for (let round = 0; round < MAX_GLOBAL_ROUNDS; round++) {
+        if (globalRunId !== myRunId || SP.state.pendingResume) {
+          U.log(`  [task] 全局轮次检测到变化，退出`);
+          return;
+        }
         if (!SP.state.running) break;
         if (!await tabStillAlive(tid)) { U.log('任务标签页已关闭，停止任务', 'err'); break; }
 
@@ -193,15 +255,24 @@
         U.log(`\n=== 第 ${round + 1} 轮：待处理 ${todo.length} 节 ===`);
 
         for (let i = 0; i < todo.length; i++) {
+          if (globalRunId !== myRunId || SP.state.pendingResume) {
+            U.log(`  [task] 节循环检测到变化，退出`);
+            return;
+          }
           if (!SP.state.running) break;
           if (!await tabStillAlive(tid)) {
             U.log('任务标签页已关闭，停止任务', 'err');
             SP.state.running = false;
             break;
           }
-          await processOneSection(todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY);
+          await processOneSection(todo[i], i, todo.length, tid, autoMute, MAX_SECTION_RETRY, myRunId);
         }
         if (!SP.state.running) break;
+      }
+
+      if (globalRunId !== myRunId || SP.state.pendingResume) {
+        U.log(`  [task] 最终复查前检测到变化，退出`);
+        return;
       }
 
       if (SP.state.running && await tabStillAlive(tid)) {
@@ -216,12 +287,14 @@
             U.log(`⚠ 最终复查发现 ${finalTodo.length} 节仍未完成:`, 'err');
             finalTodo.forEach(s => U.log(`  - [${s.label}] ${s.name}`, 'err'));
             for (let finalRound = 0; finalRound < 2 && SP.state.running; finalRound++) {
+              if (globalRunId !== myRunId || SP.state.pendingResume) return;
               if (!await tabStillAlive(tid)) break;
               U.log(`\n--- 最终补救第 ${finalRound + 1} 轮 ---`, 'err');
               let anyProgress = false;
               for (const s of finalTodo) {
+                if (globalRunId !== myRunId || SP.state.pendingResume) return;
                 if (!SP.state.running) break;
-                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2);
+                const done = await processOneSection(s, 0, finalTodo.length, tid, autoMute, 2, myRunId);
                 if (done) anyProgress = true;
               }
               if (!anyProgress) { U.log('补救无进展，退出', 'err'); break; }
@@ -234,7 +307,7 @@
         }
       }
 
-      if (SP.state.running) {
+      if (SP.state.running && globalRunId === myRunId && !SP.state.pendingResume) {
         U.log('\n=== 全部完成 ===', 'ok');
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
@@ -245,16 +318,18 @@
     } catch (e) {
       U.log('异常: ' + e.message, 'err');
     } finally {
-      SP.state.runningTabId = null;
-      SP.state.runningSectionId = null;
-      isPaused = false;
-      U.setStatus(false);
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      if (pauseBtn) {
-        pauseBtn.disabled = true;
-        pauseBtn.textContent = '暂停';
-        pauseBtn.classList.remove('active');
+      if (globalRunId === myRunId) {
+        SP.state.runningTabId = null;
+        SP.state.runningSectionId = null;
+        isPaused = false;
+        U.setStatus(false);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        if (pauseBtn) {
+          pauseBtn.disabled = true;
+          pauseBtn.textContent = '暂停';
+          pauseBtn.classList.remove('active');
+        }
       }
     }
   }
@@ -264,7 +339,9 @@
     const tid = SP.state.runningTabId;
     SP.state.running = false;
     SP.state.runningSectionId = null;
+    SP.state.pendingResume = null;
     isPaused = false;
+    globalRunId++;
     U.log('发送停止信号…', 'err');
     if (tid) await S.sendToTab('STOP', {}, 5000, tid);
   }

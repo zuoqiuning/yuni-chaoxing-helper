@@ -8,6 +8,21 @@
   const dom = CXH.dom;
   const utils = CXH.utils;
 
+  async function playWithTimeout(v, timeoutMs = 2000) {
+    try {
+      v.muted = true;
+    } catch (_) {}
+    try {
+      const ok = await Promise.race([
+        v.play().then(() => true).catch(() => false),
+        utils.sleep(timeoutMs).then(() => false)
+      ]);
+      return ok && !v.paused;
+    } catch (_) {
+      return false;
+    }
+  }
+
   async function resumePlayback() {
     if (!P.currentVideoEl) return { ok: false, error: '没有正在播放的视频' };
     const v = P.currentVideoEl;
@@ -22,21 +37,15 @@
       guard.hookPauseGuard(r.videoEl);
       const pl = dom.getVideoPlayer(P.currentVideoIframe);
       if (pl) core.applyRate(r.videoEl, pl, 2);
-      try {
-        r.videoEl.muted = true;
-        await r.videoEl.play();
-        return { ok: true, reloaded: true, playing: !r.videoEl.paused };
-      } catch (e) {
-        return { ok: false, error: '重载后播放失败: ' + e.message };
-      }
+      const ok = await playWithTimeout(r.videoEl, 3000);
+      return ok ? { ok: true, reloaded: true, playing: true } : { ok: false, error: '重载后播放失败' };
     }
     if (v.paused) {
       if (!core.canSafelyRecover(v)) {
         return { ok: false, error: 'video 未就绪' };
       }
-      const r = await core.safePlay(v, true);
-      if (r.ok) return { ok: true, playing: !v.paused };
-      return { ok: false, error: r.error };
+      const ok = await playWithTimeout(v, 2000);
+      return ok ? { ok: true, playing: true } : { ok: false, error: 'play 失败' };
     }
     return { ok: true, alreadyPlaying: true };
   }
@@ -60,21 +69,112 @@
 
   async function resumeFromPause() {
     P.paused = false;
-    if (!P.currentVideoEl) return { ok: false, error: '没有正在播放的视频' };
+
+    if (!P.currentVideoEl) {
+      console.log('[CXH] resumeFromPause: 无 video，转 forceResume');
+      return await forceResume();
+    }
+
     const v = P.currentVideoEl;
+
+    if (!v.isConnected) {
+      console.log('[CXH] resumeFromPause: video 已卸载，转 forceResume');
+      return await forceResume();
+    }
+
     if (v.ended) return { ok: true, alreadyDone: true };
     if (!v.paused) return { ok: true, alreadyPlaying: true };
-    if (v.error) return await resumePlayback();
 
-    try { v.muted = true; } catch (_) {}
-    v.play().catch(() => {});
+    const ok = await playWithTimeout(v, 2000);
+    if (ok) return { ok: true, playing: true };
 
-    const start = Date.now();
-    while (Date.now() - start < 800) {
-      if (!v.paused) break;
-      await utils.sleep(100);
+    console.log('[CXH] resumeFromPause: play 超时/失败，转 forceResume');
+    return await forceResume();
+  }
+
+  async function forceResume() {
+    console.log('[CXH] forceResume 开始');
+    P.paused = false;
+
+    const oldV = P.currentVideoEl;
+    if (oldV) {
+      console.log(`[CXH] forceResume: 丢弃旧 video (isConnected=${oldV.isConnected}, currentTime=${oldV.currentTime})`);
+      try {
+        if (oldV.__cxhRateInterval) {
+          clearInterval(oldV.__cxhRateInterval);
+          oldV.__cxhRateInterval = null;
+        }
+      } catch (_) {}
     }
-    return { ok: true, playing: !v.paused };
+    P.currentVideoEl = null;
+    P.currentVideoIframe = null;
+
+    const MAX_WAIT = 15000;
+    const start = Date.now();
+    let scanCount = 0;
+
+    while (Date.now() - start < MAX_WAIT) {
+      scanCount++;
+
+      if (P.stopped) {
+        console.log('[CXH] forceResume: 已停止');
+        return { ok: false, error: 'stopped' };
+      }
+
+      // ★★★ 改动 2：检测 restartFlag
+      if (CXH.S && CXH.S.restartFlag) {
+        console.log('[CXH] forceResume: 检测到 restartFlag，退出');
+        return { ok: false, error: 'restart' };
+      }
+
+      let attaches = [];
+      try { attaches = dom.getAttachments(); } catch (_) {}
+
+      if (scanCount <= 3 || attaches.length > 0) {
+        console.log(`[CXH] forceResume: 第 ${scanCount} 次扫描, attach=${attaches.length}`);
+      }
+
+      for (let i = 0; i < attaches.length; i++) {
+        const attach = attaches[i];
+        const ifr = dom.getVideoIframe(attach);
+        if (!ifr) continue;
+        const v = dom.getVideoEl(ifr);
+        if (!v) continue;
+        if (v.error) {
+          console.log(`[CXH] forceResume attach[${i}]: video.error=${v.error.code}`);
+          continue;
+        }
+        if (v.ended) continue;
+        if (!v.duration || v.duration <= 0 || isNaN(v.duration)) {
+          continue;
+        }
+        if (v.readyState < 2) {
+          continue;
+        }
+
+        console.log(`[CXH] forceResume: ✓ 找到 video[${i}], currentTime=${v.currentTime.toFixed(1)}/${v.duration.toFixed(1)}, paused=${v.paused}, readyState=${v.readyState}`);
+
+        P.currentVideoEl = v;
+        P.currentVideoIframe = ifr;
+
+        try { guard.hookPauseGuard(v); } catch (_) {}
+        const pl = dom.getVideoPlayer(ifr);
+        if (pl) core.applyRate(v, pl, 2);
+
+        const ok = await playWithTimeout(v, 3000);
+        if (ok) {
+          console.log('[CXH] forceResume: play 成功');
+          return { ok: true, via: 'rescan', attachIdx: i, currentTime: v.currentTime };
+        } else {
+          console.log(`[CXH] forceResume: video[${i}] play 未成功`);
+        }
+      }
+
+      await utils.sleep(500);
+    }
+
+    console.log('[CXH] forceResume: 超时');
+    return { ok: false, error: 'timeout' };
   }
 
   async function playJob(videoIframe, rate, autoMute) {
@@ -200,9 +300,10 @@
     resumeFromPause,
     interruptWait,
     clearInterrupted,
+    forceResume,
     playJob,
     waitEnded
   };
 
-  console.log('[CXH] player module loaded');
+  console.log('[CXH] player module loaded (v2.1)');
 })();

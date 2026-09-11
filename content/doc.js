@@ -4,6 +4,7 @@
   if (!CXH) return;
   const utils = CXH.utils;
 
+  // 收集所有嵌套 iframe
   function collectFrames(rootDoc, rootWin, depth = 0, maxDepth = 4) {
     const list = [];
     if (depth > maxDepth) return list;
@@ -14,7 +15,6 @@
         const d = f.contentDocument;
         const w = f.contentWindow;
         if (!d || !w) continue;
-        // ★ 跳过还没加载完的
         if (d.readyState !== 'complete') continue;
         list.push({ el: f, doc: d, win: w, depth });
         if (d.body) {
@@ -79,73 +79,41 @@
     return rolled;
   }
 
-  function heightSig(win, doc) {
+  function scrollAllFrames(outerIframe) {
+    let rolled = 0;
+    try {
+      const outerDoc = outerIframe.contentDocument;
+      const outerWin = outerIframe.contentWindow;
+      if (!outerDoc || !outerWin) return 0;
+      rolled += scrollOnce(outerWin, outerDoc);
+      const frames = collectFrames(outerDoc, outerWin);
+      for (const f of frames) {
+        try { rolled += scrollOnce(f.win, f.doc); } catch (_) {}
+      }
+    } catch (_) {}
+    return rolled;
+  }
+
+  function computeSig(outerIframe) {
     let h = 0;
     try {
-      h += doc.documentElement ? doc.documentElement.scrollHeight : 0;
-      if (doc.body) h += doc.body.scrollHeight || 0;
-      const scrollers = doc.querySelectorAll('div[class*="scroll"], div[class*="viewer"], div[style*="overflow"]');
-      for (const el of scrollers) {
-        try { h += el.scrollHeight || 0; } catch (_) {}
+      const outerDoc = outerIframe.contentDocument;
+      const outerWin = outerIframe.contentWindow;
+      if (!outerDoc) return 0;
+      h += outerDoc.documentElement ? outerDoc.documentElement.scrollHeight : 0;
+      if (outerDoc.body) h += outerDoc.body.scrollHeight || 0;
+      const frames = collectFrames(outerDoc, outerWin);
+      for (const f of frames) {
+        try {
+          h += f.doc.documentElement ? f.doc.documentElement.scrollHeight : 0;
+          if (f.doc.body) h += f.doc.body.scrollHeight || 0;
+        } catch (_) {}
       }
     } catch (_) {}
     return h;
   }
 
-  async function scrollAllToBottom(outerIframe, maxRounds = 20) {
-    // ★ 重试获取 outerDoc（最多 8 次）
-    let outerDoc = null;
-    let outerWin = null;
-    for (let i = 0; i < 8; i++) {
-      try {
-        outerDoc = outerIframe.contentDocument;
-        outerWin = outerIframe.contentWindow;
-        if (outerDoc && outerWin && outerDoc.readyState === 'complete' && outerDoc.body) break;
-      } catch (_) {}
-      outerDoc = null;
-      outerWin = null;
-      await utils.sleep(600);
-    }
-    if (!outerDoc || !outerWin) {
-      return { ok: false, error: 'no outer doc/win' };
-    }
-
-    let lastSig = -1;
-    let stableCount = 0;
-    let totalRolled = 0;
-
-    for (let round = 0; round < maxRounds; round++) {
-      if (CXH.player && CXH.player.isStopped && CXH.player.isStopped()) {
-        return { ok: false, error: 'stopped' };
-      }
-
-      const frames = [{ doc: outerDoc, win: outerWin, depth: 0 }];
-      frames.push(...collectFrames(outerDoc, outerWin));
-
-      for (const f of frames) {
-        try { totalRolled += scrollOnce(f.win, f.doc); } catch (_) {}
-      }
-
-      await utils.sleep(700);
-
-      let sig = 0;
-      for (const f of frames) {
-        try { sig += heightSig(f.win, f.doc); } catch (_) {}
-      }
-
-      if (sig === lastSig) {
-        stableCount++;
-        if (stableCount >= 3) break;
-      } else {
-        stableCount = 0;
-      }
-      lastSig = sig;
-    }
-
-    return { ok: true, totalRolled, rounds: maxRounds };
-  }
-
-  async function tryCompleteTriggers(outerIframe) {
+  function tryCompleteTriggers(outerIframe) {
     try {
       const doc = outerIframe.contentDocument;
       if (!doc) return;
@@ -159,10 +127,22 @@
     } catch (_) {}
   }
 
+  // ★★★ 检测超星是否已标记完成
+  function checkAttachDone(attach) {
+    if (!attach) return false;
+    const icon = attach.querySelector('.ans-job-icon');
+    const aria = icon?.getAttribute('aria-label') || '';
+    if (aria === '任务点已完成') return true;
+    if (attach.classList.contains('ans-job-finished')) return true;
+    if (attach.querySelector('.ans-job-finished')) return true;
+    return false;
+  }
+
   CXH.doc = {
     async processDocument(attach, opts = {}) {
       if (!attach) return { ok: false, error: 'no attach' };
 
+      // 1. 找 doc iframe
       let ifr = null;
       for (const f of attach.querySelectorAll('iframe')) {
         const src = f.src || '';
@@ -174,33 +154,60 @@
       if (!ifr) ifr = attach.querySelector('iframe');
       if (!ifr) return { ok: false, error: 'no iframe' };
 
-      // ★ 等 iframe 就绪（含 readyState 和 body）
+      // 2. 等 iframe 就绪（最多 6s，间隔 200ms）
       const ready = await utils.waitFor(() => {
         try {
           const d = ifr.contentDocument;
           return d && d.readyState === 'complete' && d.body;
         } catch (_) { return false; }
-      }, { timeout: 15000 });
+      }, { timeout: 6000, interval: 200 });
+      if (!ready) return { ok: false, error: 'iframe not ready (6s)' };
 
-      if (!ready) {
-        return { ok: false, error: 'iframe not ready (15s)' };
+      // 3. 短等待渲染
+      await utils.sleep(400);
+
+      // ★★★ 4. 快速滚动 3 轮（150ms 间隔）触发懒加载 + 检查是否完成
+      for (let i = 0; i < 3; i++) {
+        scrollAllFrames(ifr);
+        await utils.sleep(150);
+        if (checkAttachDone(attach)) {
+          return { ok: true, fast: true, rounds: i + 1 };
+        }
       }
 
-      await utils.sleep(1500);
+      // ★★★ 5. 稳定滚动：最多 5 轮 × 300ms，连续 2 次签名不变就退出
+      let lastSig = -1;
+      let stable = 0;
+      for (let i = 0; i < 5; i++) {
+        if (CXH.player && CXH.player.isStopped && CXH.player.isStopped()) {
+          return { ok: false, error: 'stopped' };
+        }
+        scrollAllFrames(ifr);
+        await utils.sleep(300);
+        if (checkAttachDone(attach)) {
+          return { ok: true, fast: true, rounds: i + 4 };
+        }
+        const sig = computeSig(ifr);
+        if (sig === lastSig && sig > 0) {
+          stable++;
+          if (stable >= 2) break;
+        } else {
+          stable = 0;
+        }
+        lastSig = sig;
+      }
 
-      const res = await scrollAllToBottom(ifr, 20);
-      if (!res.ok) return res;
+      // 6. 尝试点击"完成"按钮
+      tryCompleteTriggers(ifr);
+      await utils.sleep(250);
 
-      await utils.sleep(800);
-
-      await tryCompleteTriggers(ifr);
-      await utils.sleep(500);
-
-      await scrollAllToBottom(ifr, 6);
+      // 7. 兜底再滚一遍
+      scrollAllFrames(ifr);
+      await utils.sleep(150);
 
       return { ok: true };
     }
   };
 
-  console.log('[CXH] doc module loaded');
+  console.log('[CXH] doc module loaded (fast)');
 })();

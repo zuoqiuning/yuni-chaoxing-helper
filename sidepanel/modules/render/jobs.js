@@ -23,7 +23,6 @@
     return false;
   }
 
-  // ★★★ localDoneJobs 用 sectionId 前缀，跨节不串；不随 reset 清空
   function _sKey(sectionId) {
     return sectionId || SP.state.jobCardsSectionId || 'default';
   }
@@ -47,11 +46,14 @@
     return false;
   }
 
-  // 权威完成 = 本地记录（本次会话播放过）
+  // ★★★ 关键修复：优先信任 content 传的 job.done
   function isAuthoritativeDone(sectionId, cardIndex, job) {
+    // 1. content 侧明确表示 done=true
+    if (job.done === true) return true;
+    // 2. content 侧明确表示 localDone
+    if (job.localDone === true) return true;
+    // 3. 面板侧本地记录
     if (isLocalDone(sectionId, cardIndex, job.index, job.jobId)) return true;
-    // content 侧发来的 localDone 字段（sessionStorage）
-    if (job.localDone) return true;
     return false;
   }
 
@@ -61,6 +63,17 @@
     const cTotal = cJobs.length;
     const cDone = cJobs.filter(j => isAuthoritativeDone(sectionId, card.cardIndex, j)).length;
     const cUndone = cTotal - cDone;
+
+    // ★ 诊断日志
+    if (cTotal > 0 && cDone !== cTotal) {
+      const doneList = cJobs.filter(j => isAuthoritativeDone(sectionId, card.cardIndex, j));
+      console.log(`[SP] 卡${card.cardIndex}: ${cDone}/${cTotal} 完成`, {
+        done: doneList.map(j => ({ idx: j.index, jobId: j.jobId, type: j.type })),
+        undone: cJobs.filter(j => !isAuthoritativeDone(sectionId, card.cardIndex, j)).map(j => ({
+          idx: j.index, jobId: j.jobId, type: j.type, done: j.done, localDone: j.localDone
+        }))
+      });
+    }
 
     let cardName = card.cardText || '';
     cardName = cardName.replace(/^\d+[\s.、]*/, '').trim();
@@ -105,13 +118,11 @@
     `;
   }
 
-  // ★ resetCardJobs 现在不清空 localDoneJobs
   function resetCardJobs() {
     SP.state.jobCards = [];
     SP.state.playingCardIdx = null;
     SP.state.playingJobIdx = null;
     SP.state.playingJobId = null;
-    // ★★★ 不再清空 SP.state.localDoneJobs
     const el = U.$('jobs');
     if (el) el.innerHTML = '<div class="empty">加载中…</div>';
     const statEl = U.$('jobs-stat');
@@ -150,7 +161,6 @@
   function updateOneCard(card, sectionId) {
     if (!card) return;
 
-    // sectionId 变化时清空 current 数据但**保留 localDoneJobs**
     if (sectionId && SP.state.jobCardsSectionId && SP.state.jobCardsSectionId !== sectionId) {
       SP.state.jobCards = [];
       SP.state.playingCardIdx = null;
@@ -247,7 +257,6 @@
   }
 
   function markJobDone(jobId, cardIndex, jobIndex) {
-    // ★ 加 sectionId 前缀记录
     markLocalDone(SP.state.jobCardsSectionId, cardIndex, jobIndex, jobId);
 
     if (SP.state.playingJobId === jobId

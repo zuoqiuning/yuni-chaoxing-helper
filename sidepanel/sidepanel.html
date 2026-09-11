@@ -11,7 +11,6 @@
 </head>
 <body>
   <div class="app">
-    <!-- AI banner + 工具栏 -->
     <div class="ai-banner warn" id="ai-banner">
       <span class="ai-banner-icon">●</span>
       <span class="ai-banner-text">未接入 AI 模型</span>
@@ -23,7 +22,6 @@
       </div>
     </div>
 
-    <!-- 睡眠标签页引导 -->
     <div class="guide-banner" id="sleep-banner" style="display:none;">
       <span class="guide-banner-icon">!</span>
       <span class="guide-banner-text">建议关闭浏览器睡眠标签页</span>
@@ -31,9 +29,7 @@
       <button class="guide-banner-close" id="sleep-banner-close" title="不再提示">×</button>
     </div>
 
-    <!-- 主体（不滚动，各卡片自己滚动） -->
     <main class="app-body">
-      <!-- 课程目录 -->
       <section class="card card-catalog">
         <div class="card-header">
           <span class="card-title">课程目录</span>
@@ -42,7 +38,6 @@
         <div class="card-body" id="catalog"><div class="empty">加载中…</div></div>
       </section>
 
-      <!-- 本节任务点 -->
       <section class="card card-jobs">
         <div class="card-header">
           <span class="card-title">本节任务点</span>
@@ -51,7 +46,6 @@
         <div class="card-body" id="jobs"><div class="empty">未扫描</div></div>
       </section>
 
-      <!-- AI 答题 -->
       <section class="card card-quiz">
         <div class="card-header">
           <span class="card-title">AI 答题</span>
@@ -70,11 +64,19 @@
               <span class="quiz-detail-arrow">▸</span>
             </button>
           </div>
+
+          <!-- ★★★ 验证码状态（内嵌，替代独立卡片） -->
+          <div id="captcha-state" style="display:none;">
+            <div class="captcha-state-text" id="captcha-state-text">正在处理验证码…</div>
+            <div class="captcha-state-input" id="captcha-state-input" style="display:none;">
+              <input type="text" id="captcha-input" placeholder="输入验证码" maxlength="8" autocomplete="off">
+              <button class="btn btn-primary btn-sm" id="captcha-submit">提交</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
-    <!-- 日志（固定高度） -->
     <section class="log-card" id="log-card">
       <div class="log-header">
         <span class="log-title">日志</span>
@@ -86,7 +88,6 @@
       <div id="log" class="log"></div>
     </section>
 
-    <!-- Footer -->
     <footer class="app-footer">
       <button id="start" class="btn btn-primary">开始刷课</button>
       <button id="pause" class="btn btn-secondary" disabled>暂停</button>
@@ -97,12 +98,12 @@
   <script src="modules/utils.js"></script>
   <script src="modules/storage.js"></script>
   <script src="modules/ai.js"></script>
-  <!-- ★ render 拆成 3 个文件（catalog + jobs + index 合并） -->
   <script src="modules/render/catalog.js"></script>
   <script src="modules/render/jobs.js"></script>
   <script src="modules/render/index.js"></script>
   <script src="modules/scan.js"></script>
   <script src="modules/quiz.js"></script>
+  <script src="modules/captcha.js"></script>
   <script src="modules/settings.js"></script>
   <script src="modules/status.js"></script>
   <script src="modules/guide.js"></script>

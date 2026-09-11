@@ -9,6 +9,7 @@
   const Store = SP.storage;
   const R = SP.render;
   const Guide = SP.guide;
+  const Captcha = SP.captcha;
 
   let lastTabUpdatedTime = 0;
   const TAB_UPDATE_THROTTLE = 2500;
@@ -36,17 +37,14 @@
     }
     if ($('quiz-ready')) $('quiz-ready').style.display = 'none';
     if ($('quiz-stat')) $('quiz-stat').textContent = '';
+    if (Captcha) Captcha.hideState();
   }
 
-  // ★★★ 新增：重置所有按钮到初始状态
   function resetButtons() {
     const startBtn = U.$('start');
     const stopBtn = U.$('stop');
     const pauseBtn = U.$('pause');
-    if (startBtn) {
-      startBtn.disabled = false;
-      startBtn.title = '';
-    }
+    if (startBtn) { startBtn.disabled = false; startBtn.title = ''; }
     if (stopBtn) stopBtn.disabled = true;
     if (pauseBtn) {
       pauseBtn.disabled = true;
@@ -81,6 +79,12 @@
 
     if (!tab || !tab.url || !tab.url.includes('chaoxing.com')) {
       U.$('catalog').innerHTML = '<div class="empty">请打开学习通课程页</div>';
+      U.$('jobs').innerHTML = '<div class="empty">—</div>';
+      return;
+    }
+
+    if (Captcha && Captcha.isCaptchaUrl(tab.url)) {
+      U.$('catalog').innerHTML = '<div class="empty">验证码页面，正在处理…</div>';
       U.$('jobs').innerHTML = '<div class="empty">—</div>';
       return;
     }
@@ -138,6 +142,7 @@
         SP.state.running = false;
         SP.state.runningTabId = null;
         SP.state.runningSectionId = null;
+        SP.state.pendingResume = null;
         U.setStatus(false);
         U.$('start').disabled = false;
         U.$('stop').disabled = true;
@@ -152,6 +157,7 @@
 
     if (msg.type === 'ALERT') {
       const { alertType, detail } = msg;
+
       if (alertType === 'LOGIN_EXPIRED') {
         U.log(`⚠ 检测到登录过期，任务已暂停`, 'err');
         await Task.pauseByAlert();
@@ -160,15 +166,30 @@
           title: '屿宁学习助手 - 需要处理',
           message: '登录已过期，请重新登录后点"继续"'
         });
-      } else if (alertType === 'CAPTCHA') {
+        return;
+      }
+
+      if (alertType === 'CAPTCHA_PAGE' || alertType === 'CAPTCHA') {
         U.log(`⚠ 检测到验证码，任务已暂停`, 'err');
-        U.log(`  详情: ${detail || '(无)'}`, 'err');
+        if (detail) U.log(`  详情: ${detail}`, 'err');
+
         await Task.pauseByAlert();
+
+        if (Captcha && Captcha.tryAutoRecognize) {
+          Captcha.resetAttempts();
+          Captcha.tryAutoRecognize({
+            onSuccess: () => U.log('验证码已通过', 'ok')
+          }).catch(e => {
+            U.log('自动识别异常: ' + e.message, 'err');
+          });
+        }
+
         chrome.runtime.sendMessage({
           type: 'NOTIFY',
           title: '屿宁学习助手 - 需要处理',
-          message: '检测到验证码，请处理后点"继续"'
+          message: '检测到验证码，正在自动识别'
         });
+        return;
       }
       return;
     }
@@ -223,10 +244,65 @@
         message: '视频被弹窗阻挡，请查看页面'
       });
     }
+
     if (msg.type === 'TAB_UPDATED') {
+      // ★★★ 优先处理：验证码刷新后的自动恢复
+      const pr = SP.state.pendingResume;
+      if (pr && pr.tabId === msg.tabId) {
+        const age = Date.now() - pr.ts;
+        if (age < 60000) {
+          // ★★★ 关键：先清 pendingResume 防止重复触发
+          SP.state.pendingResume = null;
+
+          console.log('[SP] ==================== 验证码恢复流程开始 ====================');
+
+          // ★★★ 步骤 1：先中止老流程
+          U.log('验证码已通过，正在清理旧任务…', 'ok');
+          SP.state.running = false;
+          SP.state.runningTabId = null;
+          SP.state.runningSectionId = null;
+
+          // ★★★ 步骤 2：等老流程完全退出（关键！）
+          await U.sleep(3000);
+
+          // ★★★ 步骤 3：等 content script 就绪
+          const ready = await S.waitContentScript(20000, msg.tabId);
+          if (!ready) {
+            U.log('content script 未就绪，无法恢复', 'err');
+            return;
+          }
+
+          // ★★★ 步骤 4：再等页面完全稳定
+          await U.sleep(2000);
+
+          // ★★★ 步骤 5：用 force 模式重新启动（保留进度）
+          U.log('开始从断点继续任务…', 'ok');
+          Task.startAll({ force: true, skipClearProgress: true });
+          return;
+        } else {
+          SP.state.pendingResume = null;
+        }
+      }
+
       const now = Date.now();
       if (now - lastTabUpdatedTime < TAB_UPDATE_THROTTLE) return;
       lastTabUpdatedTime = now;
+
+      try {
+        const t = await chrome.tabs.get(msg.tabId);
+        if (t && Captcha && Captcha.isCaptchaUrl && Captcha.isCaptchaUrl(t.url)) {
+          console.log('[SP] TAB_UPDATED → 验证码页');
+          U.log('⚠ 检测到验证码页', 'err');
+          await Task.pauseByAlert();
+          if (Captcha && Captcha.tryAutoRecognize) {
+            Captcha.resetAttempts();
+            Captcha.tryAutoRecognize({
+              onSuccess: () => U.log('验证码已通过', 'ok')
+            }).catch(() => {});
+          }
+          return;
+        }
+      } catch (_) {}
 
       if (!SP.state.running) {
         const tab = await S.getActiveTab();
@@ -235,6 +311,7 @@
         }
       }
     }
+
     if (msg.type === 'QUIZ_PAGE_DETECTED') {
       const tab = await S.getActiveTab();
       if (!tab || !tab.id) return;
@@ -252,18 +329,14 @@
     }
   });
 
-  // ★★★ 重写 load 事件：无条件重置 + 主动清理 content 侧残留
   window.addEventListener('load', async () => {
-    // 1. 无条件重置 sidepanel 状态（修复重启扩展后的状态残留）
     SP.state.running = false;
     SP.state.runningTabId = null;
     SP.state.runningSectionId = null;
+    SP.state.pendingResume = null;
     U.setStatus(false);
-
-    // 2. 无条件重置按钮到初始
     resetButtons();
 
-    // 3. 主动清理 content 侧残留状态（避免 interceptor 误拦截 + 视频挂着）
     try {
       const tab = await S.getActiveTab();
       if (tab && tab.url && tab.url.includes('chaoxing.com')) {
@@ -276,11 +349,22 @@
       console.warn('[SP] CLEAR_STATE 失败:', e);
     }
 
-    // 4. 刷新 banner + 引导
     if (SP.status && SP.status.refreshAiBanner) await SP.status.refreshAiBanner();
     if (SP.guide && SP.guide.checkShowBanner) await SP.guide.checkShowBanner();
 
-    // 5. 最后进入主流程（此时状态已干净）
+    const initTab = await S.getActiveTab();
+    if (initTab && Captcha && Captcha.isCaptchaUrl && Captcha.isCaptchaUrl(initTab.url)) {
+      console.log('[SP] 启动时检测到验证码页');
+      U.log('⚠ 检测到验证码页', 'err');
+      if (Captcha.tryAutoRecognize) {
+        Captcha.resetAttempts();
+        Captcha.tryAutoRecognize({
+          onSuccess: () => U.log('验证码已通过', 'ok')
+        }).catch(() => {});
+      }
+      return;
+    }
+
     handleTabChange('init');
   });
 
@@ -290,6 +374,20 @@
     const now = Date.now();
     if (now - lastTabUpdatedTime < TAB_UPDATE_THROTTLE) return;
     lastTabUpdatedTime = now;
+
+    if (Captcha && Captcha.isCaptchaUrl && tab && Captcha.isCaptchaUrl(tab.url)) {
+      console.log('[SP] onUpdated → 验证码页');
+      U.log('⚠ 检测到验证码页', 'err');
+      Task.pauseByAlert().then(() => {
+        if (Captcha.tryAutoRecognize) {
+          Captcha.resetAttempts();
+          Captcha.tryAutoRecognize({
+            onSuccess: () => U.log('验证码已通过', 'ok')
+          }).catch(() => {});
+        }
+      });
+      return;
+    }
 
     S.getActiveTab().then(t => {
       if (t && t.id === tabId) setTimeout(() => handleTabChange('updated'), 500);

@@ -6,9 +6,8 @@
   const AUTO_ANSWER_KEY = 'autoAnswer';
   const AUTO_MUTE_KEY = 'autoMute';
   const DISRUPT_LOCK_KEY = 'disruptLock';
+  const AUTO_CAPTCHA_OCR_KEY = 'autoCaptchaOCR';
 
-  // ⚠️ 新增配置字段必须同步加到 AI_CONFIG_DEFAULT，
-  //    否则 getAIConfig/saveAIConfig 的字段白名单会把它过滤掉
   const AI_CONFIG_DEFAULT = {
     apiKey: '',
     baseUrl: 'https://api.xiaomimimo.com/v1',
@@ -28,8 +27,6 @@
     async getAIConfig() {
       const r = await chrome.storage.local.get(AI_CONFIG_KEY);
       const saved = r[AI_CONFIG_KEY] || {};
-      // ★ 修复 #17：只保留已知字段，其余用默认值兜底
-      // 同时剔除历史遗留的未知字段
       const merged = {};
       for (const k of Object.keys(AI_CONFIG_DEFAULT)) {
         merged[k] = (typeof saved[k] !== 'undefined') ? saved[k] : AI_CONFIG_DEFAULT[k];
@@ -38,7 +35,6 @@
     },
 
     async saveAIConfig(cfg) {
-      // 保存时也做一次字段过滤，避免脏数据
       const clean = {};
       for (const k of Object.keys(AI_CONFIG_DEFAULT)) {
         clean[k] = (typeof cfg[k] !== 'undefined') ? cfg[k] : AI_CONFIG_DEFAULT[k];
@@ -68,6 +64,15 @@
     },
     async setDisruptLock(on) {
       await chrome.storage.local.set({ [DISRUPT_LOCK_KEY]: !!on });
+    },
+
+    // ★★★ 新增：自动识别验证码（默认开启）
+    async getAutoCaptchaOCR() {
+      const r = await chrome.storage.local.get(AUTO_CAPTCHA_OCR_KEY);
+      return r[AUTO_CAPTCHA_OCR_KEY] !== false;
+    },
+    async setAutoCaptchaOCR(on) {
+      await chrome.storage.local.set({ [AUTO_CAPTCHA_OCR_KEY]: !!on });
     }
   };
 })();

@@ -39,7 +39,6 @@
     utils.sendMsg({ type: 'CARD_JOBS_UPDATE', sectionId, card });
   }
 
-  // ★ scanCardNow：加 localDone 字段（来自 sessionStorage）
   function scanCardNow(cardIdx, sectionId) {
     const iframeIdx = dom.getIframeCardIdx();
     if (iframeIdx !== -1 && iframeIdx !== cardIdx) {
@@ -49,28 +48,47 @@
     const tabs = dom.getCardTabs();
     const progress = sectionId ? core.getProgress(sectionId) : {};
 
-    const list = jobs.scanCurrentCard().map(j => ({
-      ...j,
-      cardIndex: cardIdx,
-      cardText: jobs.getCardText(tabs[cardIdx])
-    }));
+    // ★★★ 改动 1：视频实际播完但 DOM 未标记完成 → 兜底判定
+    const list = jobs.scanCurrentCard().map(j => {
+      if (j.type === 'video' && !j.done) {
+        try {
+          const attaches = dom.getAttachments();
+          const attach = attaches[j.index];
+          const ifr = attach ? dom.getVideoIframe(attach) : null;
+          const v = ifr ? dom.getVideoEl(ifr) : null;
+          if (v && v.duration > 0 && !isNaN(v.duration) && v.currentTime >= v.duration - 2) {
+            console.log(`[CXH] scanCardNow: [#${j.index}] 视频 ${v.currentTime.toFixed(1)}/${v.duration.toFixed(1)} 已播完，兜底标记 done`);
+            j.done = true;
+          }
+        } catch (_) {}
+      }
+      return { ...j, cardIndex: cardIdx, cardText: jobs.getCardText(tabs[cardIdx]) };
+    });
     const targets = list.filter(j => j.type === 'video' || j.type === 'document');
+
+    const jobsOut = targets.map(j => {
+      const key = core.jobKey(j, cardIdx);
+      const localDone = !!progress[key];
+      const finalDone = j.done || localDone;
+      return {
+        index: j.index,
+        jobId: j.jobId,
+        objectId: j.objectId,
+        type: j.type,
+        done: finalDone
+      };
+    });
+
+    const doneCount = jobsOut.filter(j => j.done).length;
+    console.log(`[CXH] scanCardNow 卡${cardIdx + 1}: ${doneCount}/${jobsOut.length} 完成`);
+    jobsOut.forEach((j, i) => {
+      console.log(`  [#${i}] idx=${j.index} type=${j.type} done=${j.done} jobId=${(j.jobId || '').slice(-8)}`);
+    });
 
     return {
       cardIndex: cardIdx,
       cardText: jobs.getCardText(tabs[cardIdx]),
-      jobs: targets.map(j => {
-        const key = core.jobKey(j, cardIdx);
-        const localDone = !!progress[key];
-        return {
-          index: j.index,
-          jobId: j.jobId,
-          objectId: j.objectId,
-          type: j.type,
-          done: j.done,
-          localDone  // ★ 传给 panel
-        };
-      })
+      jobs: jobsOut
     };
   }
 
@@ -116,6 +134,7 @@
 
       const progress = core.getProgress(sectionId);
       const targets = cardInfo.jobs;
+
       const unfinished = targets.filter(j => {
         const key = core.jobKey(j, i);
         if (progress[key]) return false;
@@ -218,6 +237,9 @@
     const MAX_RESTART = 5;
     const MAX_PASS = 2;
     let lastResult = { total: 0, done: 0 };
+    let cumulativeTotal = 0;
+    let cumulativeDone = 0;
+    let cumulativeCards = [];
 
     while (pass < MAX_PASS) {
       if (S.restartFlag) {
@@ -229,6 +251,9 @@
           utils.log(`  ↻ 收到重启信号（第 ${restartCount} 次）`, 'ok');
           pass = 0;
           handledJobs.clear();
+          cumulativeTotal = 0;
+          cumulativeDone = 0;
+          cumulativeCards = [];
           sendCardReset(sectionId);
           await utils.sleep(1000);
           continue;
@@ -236,7 +261,7 @@
       }
       if (!isOnExpectedSection(expectedSectionId)) {
         P.expectedSectionId = null;
-        return { ok: false, total: lastResult.total, done: lastResult.done, stopped: P.stopped, sectionChanged: true, sectionDone: false };
+        return { ok: false, total: cumulativeTotal, done: cumulativeDone, stopped: P.stopped, sectionChanged: true, sectionDone: false };
       }
       if (P.stopped) break;
 
@@ -246,16 +271,22 @@
         rate, maxRetry, sectionId, autoMute, expectedSectionId, handledJobs, trustDone
       );
 
+      if (result.totalCount > cumulativeTotal) cumulativeTotal = result.totalCount;
+      if (result.doneCount > cumulativeDone) cumulativeDone = result.doneCount;
+      if (result.cardResults && result.cardResults.length > 0) {
+        cumulativeCards = result.cardResults;
+      }
+
       sendCardJobs(result.cardResults, sectionId);
 
       if (result.sectionChanged) {
         P.expectedSectionId = null;
-        return { ok: false, total: lastResult.total, done: lastResult.done, stopped: P.stopped, sectionChanged: true, sectionDone: false };
+        return { ok: false, total: cumulativeTotal, done: cumulativeDone, stopped: P.stopped, sectionChanged: true, sectionDone: false };
       }
       if (result.sectionDone) {
         P.expectedSectionId = null;
-        utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: result.totalCount, done: result.doneCount, stopped: false });
-        return { ok: true, total: result.totalCount, done: result.doneCount, stopped: false, sectionChanged: false, sectionDone: true };
+        utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: cumulativeTotal, done: cumulativeDone, stopped: false });
+        return { ok: true, total: cumulativeTotal, done: cumulativeDone, stopped: false, sectionChanged: false, sectionDone: true };
       }
       if (S.restartFlag) continue;
       if (P.stopped) break;
@@ -278,8 +309,8 @@
         if (finished) {
           utils.log(`✓ 服务端已确认完成`);
           P.expectedSectionId = null;
-          utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: result.totalCount, done: result.doneCount, stopped: false });
-          return { ok: true, total: result.totalCount, done: result.doneCount, stopped: false, sectionChanged: false, sectionDone: true };
+          utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: cumulativeTotal, done: cumulativeDone, stopped: false });
+          return { ok: true, total: cumulativeTotal, done: cumulativeDone, stopped: false, sectionChanged: false, sectionDone: true };
         }
         utils.log(`⚠ 全部处理完但服务端未标记完成`, 'err');
         break;
@@ -301,13 +332,13 @@
     if (core.isSectionFinished(sectionId)) {
       utils.log(`✓ 服务端已确认本节完成`);
       P.expectedSectionId = null;
-      utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: lastResult.total, done: lastResult.done, stopped: false });
-      return { ok: true, total: lastResult.total, done: lastResult.done, stopped: false, sectionChanged: false, sectionDone: true };
+      utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: cumulativeTotal, done: cumulativeDone, stopped: false });
+      return { ok: true, total: cumulativeTotal, done: cumulativeDone, stopped: false, sectionChanged: false, sectionDone: true };
     }
 
     P.expectedSectionId = null;
-    utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: lastResult.total, done: lastResult.done, stopped: P.stopped });
-    return { ok: true, total: lastResult.total, done: lastResult.done, stopped: P.stopped, sectionChanged: false, sectionDone: false };
+    utils.sendMsg({ type: 'SECTION_DONE', sectionId, courseId, total: cumulativeTotal, done: cumulativeDone, stopped: P.stopped });
+    return { ok: true, total: cumulativeTotal, done: cumulativeDone, stopped: P.stopped, sectionChanged: false, sectionDone: false };
   }
 
   function isRunning() {

@@ -5,18 +5,73 @@
   const dom = CXH.dom;
   const utils = CXH.utils;
 
-  function judgeDone(attach, aria) {
-    if (aria === '任务点已完成') return true;
-    if (aria === '任务点未完成') return false;
+  // ============================================================
+  // ★★★ 完成判断（多重策略，class 优先）
+  // ============================================================
+  function judgeDone(attach) {
+    // 策略 1：attach 本身有 class
     if (attach.classList.contains('ans-job-finished')) return true;
+
+    // 策略 2：attach 内有 .ans-job-finished
     if (attach.querySelector('.ans-job-finished')) return true;
+
+    // 策略 3：找到 .ans-job-icon，检查它和它的所有祖先（最多 4 层）
+    const icons = attach.querySelectorAll('.ans-job-icon');
+    for (const icon of icons) {
+      let el = icon;
+      for (let i = 0; i < 4 && el; i++) {
+        try {
+          if (el.classList && el.classList.contains('ans-job-finished')) return true;
+        } catch (_) {}
+        el = el.parentElement;
+      }
+    }
+
+    // 策略 4：找 .ans-job-icon 本身或祖先的 aria-label
+    for (const icon of icons) {
+      let el = icon;
+      for (let i = 0; i < 4 && el; i++) {
+        try {
+          const aria = el.getAttribute && el.getAttribute('aria-label');
+          if (aria && /任务点已完成/.test(aria)) return true;
+        } catch (_) {}
+        el = el.parentElement;
+      }
+    }
+
     return false;
+  }
+
+  // 详细诊断
+  function diagnoseAttach(attach) {
+    const icons = attach.querySelectorAll('.ans-job-icon');
+    const firstIcon = icons[0];
+    const firstAria = firstIcon ? (firstIcon.getAttribute('aria-label') || '') : '';
+    // 找 ans-job-finished 在哪
+    let finishedEl = attach.querySelector('.ans-job-finished');
+    let finishedInAncestor = false;
+    if (firstIcon) {
+      let el = firstIcon;
+      for (let i = 0; i < 4 && el; i++) {
+        if (el.classList && el.classList.contains('ans-job-finished')) {
+          finishedInAncestor = true;
+          break;
+        }
+        el = el.parentElement;
+      }
+    }
+    return {
+      iconCount: icons.length,
+      firstAria,
+      hasFinishedChild: !!finishedEl,
+      finishedInAncestor,
+      attachClasses: attach.className
+    };
   }
 
   function classifyType(src) {
     if (!src) return 'unknown';
     if (/ananas\/modules\/video/.test(src)) return 'video';
-    // ★ downloadfile = 附件（rar/zip），不是文档任务
     if (/downloadfile/.test(src)) return 'attachment';
     if (/ananas\/modules\/doc/.test(src)) return 'document';
     if (/ananas\/modules\/pdf/.test(src)) return 'document';
@@ -57,9 +112,10 @@
       const jid = extractAttr(a, 'jobid');
       const oid = extractAttr(a, 'objectid');
       const hasIcon = a.querySelector('.ans-job-icon') ? '1' : '0';
+      const finished = a.querySelector('.ans-job-finished') || a.classList.contains('ans-job-finished') ? '1' : '0';
       const iframes = Array.from(a.querySelectorAll('iframe'));
       const srcs = iframes.map(f => (f.src || '').slice(-40)).join(',');
-      return `${jid}|${oid}|${hasIcon}|${srcs}`;
+      return `${jid}|${oid}|${hasIcon}|${finished}|${srcs}`;
     }).join(';;');
   }
 
@@ -93,16 +149,14 @@
 
       const attaches = dom.getAttachments();
       const list = [];
+      const diagLines = [];
+
       attaches.forEach((c, i) => {
-        // ★★★ 关键：无 .ans-job-icon → 不是任务点，跳过
         const icon = c.querySelector('.ans-job-icon');
         if (!icon) {
-          // 可选：调试日志
-          // console.log(`[CXH] attach[${i}] 无任务点图标，跳过`);
+          diagLines.push(`[${i}] 无 icon，跳过`);
           return;
         }
-
-        const aria = icon.getAttribute('aria-label') || '';
 
         const allIframes = Array.from(c.querySelectorAll('iframe'));
         const srcs = allIframes.map(f => f.src || '').filter(s => s && s !== 'about:blank');
@@ -130,14 +184,20 @@
           if (!pickedSrc) pickedSrc = srcs[0];
         }
 
-        // ★ 二次过滤：attachment 不进任务列表
-        if (type === 'attachment') return;
+        if (type === 'attachment') {
+          diagLines.push(`[${i}] attachment，跳过`);
+          return;
+        }
+
+        const done = judgeDone(c);
+        const diag = diagnoseAttach(c);
+        diagLines.push(`[${i}] type=${type} done=${done} aria="${diag.firstAria}" finishedChild=${diag.hasFinishedChild} finishedAncestor=${diag.finishedInAncestor}`);
 
         list.push({
           index: i,
-          done: judgeDone(c, aria),
+          done,
           type,
-          aria,
+          aria: diag.firstAria,
           src: pickedSrc,
           jobId: extractAttr(c, 'jobid'),
           objectId: extractAttr(c, 'objectid'),
@@ -145,6 +205,10 @@
           cardText
         });
       });
+
+      console.log(`[CXH] 卡片扫描 (卡${(originIdx >= 0 ? originIdx : 0) + 1}):`);
+      diagLines.forEach(l => console.log('  ' + l));
+
       return list;
     },
 

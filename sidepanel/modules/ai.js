@@ -38,7 +38,11 @@
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({
         type: 'MIMO_CHAT',
-        payload: { apiKey, baseUrl, model, messages, thinkingType: thinkingType || 'disabled', max_tokens: maxTokens }
+        payload: {
+          apiKey, baseUrl, model, messages,
+          thinkingType: thinkingType || 'disabled',
+          max_tokens: maxTokens
+        }
       }, (resp) => {
         if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
         else resolve(resp || { ok: false, error: 'no response' });
@@ -46,7 +50,6 @@
     });
   }
 
-  // ★ 修复 #2：括号配平解析 JSON，替代贪婪正则
   function extractBalancedJson(text) {
     if (!text) return null;
     const start = text.indexOf('{');
@@ -74,7 +77,6 @@
   }
 
   function parseAnswers(content, total) {
-    // 1. 优先括号配平解析
     const jsonStr = extractBalancedJson(content);
     if (jsonStr) {
       try {
@@ -91,7 +93,6 @@
       }
     }
 
-    // 2. 兜底：逐行提取
     console.warn('[SP] 使用逐行兜底解析');
     const arr = [];
     const lines = content.split('\n').filter(Boolean);
@@ -137,5 +138,158 @@
     };
   }
 
-  SP.ai = { verifyConfig, askQuiz, buildPrompt, parseAnswers };
+  // 验证码提取
+  function extractCaptchaCode(text) {
+    if (!text) return null;
+    const raw = String(text).trim();
+    
+    // ★★★ 新增：先判断完整的 UNKNOWN（AI 明确说无法识别）
+    if (/^UNKNOWN$/i.test(raw) || /^UNKNOWN[。.!！\s]*$/i.test(raw)) {
+      console.log('[SP] AI 明确返回 UNKNOWN，视为失败');
+      return null;  // 让调用方判断为"无法识别"
+    }
+
+    let cleaned = raw
+      .replace(/```[a-z]*\s*/g, '')
+      .replace(/```/g, '')
+      .replace(/^["'`\s]+|["'`\s]+$/g, '')
+      .trim();
+
+    console.log('[SP] 提取前文本:', JSON.stringify(cleaned.slice(0, 100)));
+
+    if (/^[A-Za-z]{4}$/.test(cleaned)) {
+      console.log('[SP] 命中策略 1：纯 4 字母');
+      return cleaned;
+    }
+
+    if (/^[A-Za-z0-9]{4,6}$/.test(cleaned)) {
+      console.log('[SP] 命中策略 2：纯 4-6 字母数字');
+      return cleaned;
+    }
+
+    const cnMatch = cleaned.match(/(?:验证码|字符|识别结果|结果|答案是|如下|为|是)[\s：:]*([A-Za-z]{4})/);
+    if (cnMatch && cnMatch[1]) {
+      console.log('[SP] 命中策略 3：中文标记');
+      return cnMatch[1];
+    }
+
+    try {
+      const m = cleaned.match(/\{[\s\S]*?\}/);
+      if (m) {
+        const obj = JSON.parse(m[0]);
+        for (const k of ['code', 'captcha', 'answer', 'result', 'text']) {
+          if (obj[k] && /^[A-Za-z]{4}$/.test(String(obj[k]))) {
+            console.log('[SP] 命中策略 4：JSON');
+            return String(obj[k]);
+          }
+        }
+      }
+    } catch (_) {}
+
+    const NOISE = new Set([
+      'UNKNOWN', 'IMAGE', 'CODE', 'CAPTCHA', 'VERIFY', 'MIMO',
+      'PNG', 'JPG', 'JPEG', 'HTTP', 'HTTPS',
+      'THIS', 'THAT', 'WITH', 'FROM', 'THE', 'AND', 'FOR',
+      'NONE', 'FAIL', 'NULL', 'TRUE', 'FALSE', 'ABOUT',
+      'LOOK', 'SEEM', 'SHOW', 'TEXT', 'YOUR', 'HAVE'
+    ]);
+
+    const allFour = cleaned.match(/(?:^|[^A-Za-z0-9])([A-Za-z]{4})(?![A-Za-z0-9])/g);
+    if (allFour) {
+      const candidates = allFour
+        .map(m => m.replace(/[^A-Za-z]/g, ''))
+        .filter(t => t.length === 4 && !NOISE.has(t.toUpperCase()));
+
+      console.log('[SP] 策略 5 候选:', candidates);
+
+      if (candidates.length === 1) return candidates[0];
+      if (candidates.length > 1) {
+        const scored = candidates.map(t => {
+          let score = 0;
+          if (/[a-z]/.test(t) && /[A-Z]/.test(t)) score += 10;
+          if (/^[A-Z][a-z][A-Z][a-z]$/.test(t)) score += 5;
+          if (/^[a-z][A-Z][a-z][A-Z]$/.test(t)) score += 5;
+          if (/^[A-Z]{4}$/.test(t)) score += 2;
+          if (/^[a-z]{4}$/.test(t)) score += 1;
+          return { t, score };
+        }).sort((a, b) => b.score - a.score);
+        return scored[0].t;
+      }
+    }
+
+    const brutal = cleaned.match(/[A-Za-z]{4}/g);
+    if (brutal && brutal.length > 0) {
+      const valid = brutal.filter(t => !NOISE.has(t.toUpperCase()));
+      if (valid.length > 0) {
+        const mixed = valid.find(t => /[a-z]/.test(t) && /[A-Z]/.test(t));
+        return mixed || valid[0];
+      }
+    }
+
+    return null;
+  }
+
+  // ★★★ 从截图识别验证码（prompt 说明有放大图）
+  async function recognizeCaptchaFromScreenshot(screenshotDataUrl, cfg) {
+    const prompt = `这是学习通（超星）网页的完整截图。
+
+截图中通常包含一个**被放大的验证码图片**（超星会自动弹出放大层），验证码固定在放大的图片中显示。
+
+【验证码特征】
+- 固定 4 个英文字母（大小写混合）
+- 手写风格，有干扰线条、噪点
+
+【要求】
+- 仔细看截图中**尺寸最大的、带字母的图片区域**
+- 只输出这 4 个字母，不要任何其他内容
+- 不要标点、空格、中文、引号、代码块
+- 直接输出，例如：FEcF
+- 完全无法识别时，只输出：UNKNOWN
+
+请输出：`;
+
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: screenshotDataUrl } }
+        ]
+      }
+    ];
+
+    const resp = await callMiMo({
+      apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model,
+      messages,
+      thinkingType: 'disabled',
+      maxTokens: 50
+    });
+
+    if (!resp.ok) return resp;
+
+    const rawContent = String(resp.content || '');
+    try {
+      SP.utils.log(`AI 原始返回: "${rawContent.slice(0, 150)}"`);
+    } catch (_) {}
+    console.log('[SP] AI 完整输出:', rawContent);
+
+    const code = extractCaptchaCode(rawContent);
+
+    if (!code) {
+      return { ok: false, error: '无法从 AI 输出中提取 4 字母', raw: rawContent };
+    }
+    if (code.toUpperCase() === 'UNKNOWN') {
+      return { ok: false, error: 'AI 无法识别图片', raw: rawContent };
+    }
+    if (code.length !== 4) {
+      return { ok: false, error: `识别结果不是 4 字母: "${code}"`, raw: rawContent };
+    }
+
+    return { ok: true, code, raw: rawContent };
+  }
+
+  SP.ai = {
+    verifyConfig, askQuiz, buildPrompt, parseAnswers,
+    recognizeCaptchaFromScreenshot
+  };
 })();

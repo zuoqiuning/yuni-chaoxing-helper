@@ -4,19 +4,42 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((err) => console.warn('[BG]', err));
 
+console.log('[BG] background loaded');
+
 // ============================================================
-// 页面更新 → 取消可丢弃 + 通知 sidepanel + 登录过期检测
+// 页面更新
 // ============================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!tab || !tab.url) return;
   if (!tab.url.includes('chaoxing.com')) return;
 
-  // ★ 登录过期检测（跳转到 passport 域名）
+  // 详细日志（只在关键事件打）
+  if (changeInfo.url) {
+    console.log(`[BG] tab ${tabId} URL → ${tab.url.slice(0, 100)}`);
+  }
+  if (changeInfo.status === 'complete') {
+    console.log(`[BG] tab ${tabId} 页面加载完成`);
+  }
+
+  // ★ 登录过期检测
   if (/passport2?\.chaoxing\.com|passport\.chaoxing\.com/.test(tab.url)) {
+    console.log(`[BG] ⚠ 检测到登录过期`);
     chrome.runtime.sendMessage({
       type: 'ALERT',
       alertType: 'LOGIN_EXPIRED',
       detail: '页面跳转到登录页',
+      url: tab.url,
+      tabId
+    }).catch(() => {});
+  }
+
+  // ★ 验证码页检测
+  if (/antispider|showverify|checkcode|vercode|verify\.ac/i.test(tab.url)) {
+    console.log(`[BG] ⚠ 检测到验证码页面 URL`);
+    chrome.runtime.sendMessage({
+      type: 'ALERT',
+      alertType: 'CAPTCHA_PAGE',
+      detail: '跳转到验证码页',
       url: tab.url,
       tabId
     }).catch(() => {});
@@ -28,7 +51,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   chrome.runtime.sendMessage({ type: 'TAB_UPDATED', tabId, url: tab.url }).catch(() => {});
 });
 
-// 标签页关闭 → 通知 sidepanel
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.runtime.sendMessage({ type: 'TAB_CLOSED', tabId }).catch(() => {});
 });
@@ -38,6 +60,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // ============================================================
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return false;
+
+  // 调试：记录所有 ALERT 消息
+  if (msg.type === 'ALERT') {
+    console.log(`[BG] 收到 ALERT:`, msg.alertType, msg.detail || '');
+  }
 
   if (msg.type === 'MIMO_CHAT') {
     callMiMo(msg.payload)
@@ -72,7 +99,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ============================================================
 // MiMo API 调用
 // ============================================================
-async function callMiMo({ apiKey, baseUrl, model, messages, thinkingType }) {
+async function callMiMo({ apiKey, baseUrl, model, messages, thinkingType, max_tokens }) {
   const url = `${baseUrl}/chat/completions`;
   const body = {
     model: model || 'mimo-v2.5',
@@ -80,6 +107,12 @@ async function callMiMo({ apiKey, baseUrl, model, messages, thinkingType }) {
     stream: false,
     thinking: { type: thinkingType || 'disabled' }
   };
+
+  if (max_tokens && typeof max_tokens === 'number' && max_tokens > 0) {
+    body.max_tokens = max_tokens;
+  }
+
+  console.log(`[BG] 调用 MiMo API (thinking=${thinkingType}, max_tokens=${max_tokens || 'default'})`);
 
   const resp = await fetch(url, {
     method: 'POST',
